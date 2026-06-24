@@ -394,18 +394,19 @@ If `icon` or `displayName` are omitted, then the ones supplied by `accountIdenti
 Your script should implement this function to load any new data and return it to the app with `processResults` or `processError`. Variables can be used to determine what to load. For example, whether to include mentions on Mastodon or not.
 
 ---
-### performAction(actionId, actionValue, item)
+### performAction(actionId, item)
 
 Tapestry calls this function when an action needs to be performed by the connector.
 
   * actionId: A `String` with the action id
-  * actionValue: The `String` value that was assigned to the action.
   * item: the `Item` instance that the action is being requested for.
 
-After performing the action, call `actionComplete()` with the results.
+Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as-needed. After performing the action, call `actionComplete()` with the results.
 
 > **Note:** Only one action per feed is allowed to be running at a time.
-  
+
+> **Compatibility:** Connectors with a `minimum_app_version` below 2.0 instead receive `performAction(actionId, actionValue, item)`, where `actionValue` is the string that was assigned to the action. As of 2.0, `actionValue` is no longer used and thus omitted. See `actions.json`.
+
 See section on `actions.json` and `actionComplete()` for more information on how to define and perform actions.
 
 ---
@@ -1619,60 +1620,67 @@ Actions are displayed or preferred in the order they are defined in the `actions
 }
 ```
 
-When returning an `Item` in `processResults()` you can include a dictionary of `actions` that can be applied to that item. Each action has an `id` and a string value that will be passed to the action when it's performed.
+When returning an `Item` in `processResults()`, use `item.addAction()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
 
-For example, an action that marks an item as a favorite, might need an identifier: 
-
-```javascript
-	item.actions = { favorite: "123456" };
-```
-
-It's also likely that structured data will be needed, so JSON can be used as an action value:
+For example, an action that marks an item as a favorite might need an identifier when processing the action in `performAction`:
 
 ```javascript
-	item.actions = { like: `{ "uri": "at:..." }`, repost: `{ "uri": "at:..." }` };
+	item.metadata = { id: "123456" };
+	item.addAction("favorite");
 ```
 
-When an item has one or more actions, a menu or one or more action buttons will be displayed in the app. When a user selects one of the actions the `performAction` function is called with the action `id`, `value`, and `item`.
+`metadata` is a single set of string key/value pairs shared by all of an item's actions, and can hold structured data with multiple keys:
 
-It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, the action would be removed from the item and replaced with "unfavorite" action with a different icon and/or name so the user can tell that the state has changed.
+```javascript
+	item.metadata = { uri: "at:...", cid: "..." };
+	item.addAction("like");
+	item.addAction("repost");
+```
+
+When an item has one or more actions, a menu or one or more action buttons will be displayed in the app. When a user selects one, the `performAction` function is called with the action `id` and the `item`.
+
+It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or name so the user can tell that the state has changed. Use `item.removeAction()` and `item.addAction()` within your `performAction` implementation to do this.
 
 The modified item is returned to Tapestry using `actionComplete`. If the action cannot be performed, an `Error` should be returned and will be displayed to the user.
 
-This example performs "favorite" and "unfavorite" on an item. Note that any part of the item can be modified: the body in this example, but it could be annotations or attachments as well. The example also shows how the state of the item is managed using `item.actions`:
+This example performs "favorite" and "unfavorite" on an item. Note that any part of the item can be modified: the body in this example, but it could be annotations or attachments as well. The example also shows how data is read from `item.metadata` and how the state of the item is managed:
 
 ```javascript
 
-function performAction(actionId, actionValue, item) {
+function performAction(actionId, item) {
 	console.log(`actionId = ${actionId}`);
 	if (actionId == "favorite") {
+		let id = item.metadata.id;
+		// (send a request to the server using `id` to favorite the item)
+
 		let content = item.body;
 		content += "<p>Faved!</p>";
 		item.body = content;
 		
-		let actions = item.actions;
-		delete actions["favorite"];
-		actions["unfavorite"] = "boo";
-		item.actions = actions;
+		item.removeAction("favorite");
+		item.addAction("unfavorite");
 		actionComplete(item, null);
 	}
 	else if (actionId == "unfavorite") {
+		let id = item.metadata.id;
+		// (send a request to the server using `id` to unfavorite the item)
+
 		let content = item.body;
 		content += "<p><strong>UNFAVED!</strong></p>";
 		item.body = content;
 
-		let actions = item.actions;
-		delete actions["unfavorite"];
-		actions["favorite"] = "yay";
-		item.actions = actions;
+		item.removeAction("unfavorite");
+		item.addAction("favorite");
 		actionComplete(item, null);
 	}
 	else if (actionId == "whoops") {
 		let error = new Error("That wasn't supposed to happen!")
 		actionComplete(null, error);
 	}
-
+}
 ```
+
+> **Compatibility:** `item.metadata`, `item.addAction()`, and `item.removeAction()` require `minimum_app_version="2.0"`, and at that version `performAction` no longer receives the `actionValue` argument. Before 2.0, an action stored its own value directly — `item.actions = { favorite: "123456" }` — which was passed to `performAction`. New connectors should set `minimum_app_version` to 2.0 or higher and avoid using the `item.actions` property directly.
 
 #### Action Roles
 
