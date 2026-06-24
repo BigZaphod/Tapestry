@@ -10,6 +10,41 @@ This is a work-in-progress and details are certain to change.
 > **Note:** The JavaScript in connectors must conform to the [ECMA-262 specification](http://www.ecma-international.org/publications/standards/Ecma-262.htm). This specification defines the language and its basic [functions](https://262.ecma-international.org/14.0/#sec-function-properties-of-the-global-object) and [objects](https://262.ecma-international.org/14.0/#sec-constructor-properties-of-the-global-object). Additions that support the Document Object Model (DOM) and other browser functions are not available.
 
 ---
+## Changes by Version
+
+Each Tapestry release may add, change, or remove API. A connector opts into a release's behavior with the `minimum_app_version` property in `plugin-config.json`. If that property isn't set, the connector gets the original (pre-1.3) behavior, and newer API is unavailable or ignored.
+
+The list below summarizes what changed at each version so you can upgrade an older connector. Throughout the rest of this document, the **Compatibility** notes spell out the details for each item. When upgrading, start at your connector's current `minimum_app_version` and work forward.
+
+### 2.0
+
+The largest change since 1.0: the interface functions now **return** their results (and **throw** an `Error` to report failure) instead of calling separate completion functions.
+
+  * **Changed** — [`load()`](#load) returns an `Array` of `Item`s; the load ends when it returns. [`processResults()`](#processresults) still works for incremental delivery, but its `isComplete` argument is now ignored.
+  * **Changed** — [`verify()`](#verify) returns the verification result (an `Object` or display-name `String`) instead of reporting it through `processVerification()`.
+  * **Changed** — [`performAction(actionId, item)`](#performaction) returns its result; the `actionValue` argument was removed (actions now read data from `item.metadata`).
+  * **Removed** (when targeting 2.0) — `processError()`, `processVerification()`, and `actionComplete()` are no longer provided. Throw an `Error` instead.
+  * **Added** — [`item.metadata`](#metadata-dictionary), a per-item `[String: String]` bag for data an action needs.
+  * **Added** — [`item.addAction()` / `item.removeAction()`](#actionsjson) for managing an item's actions, replacing the old per-action value strings (`item.actions = { id: "value" }`).
+
+Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
+
+### 1.4
+
+  * **Added** — an optional [`role`](#action-roles) on actions, plus the `"context"` role for actions that return a conversation thread.
+  * **Added** — `performAction` (via `actionComplete()`) can return an `Array` of `Item`s, used by context actions.
+
+### 1.3
+
+  * **Added** — [`sendConditionalRequest()`](#sendconditionalrequest) for HTTP conditional (304 Not Modified) requests.
+  * **Added** — [`PollAttachment`](#pollattachment) and [`PollOption`](#polloption); the [`Item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) array can also contain `Item` instances for "quoted post" presentation.
+  * **Changed** — [`xmlParse()`](#xmlparse), [`plistParse()`](#plistparse), and [`extractProperties()`](#extractproperties) return a `Promise` (asynchronous) instead of returning a value synchronously.
+
+### 1.0
+
+The original API. `load()`, `verify()`, and `performAction()` report results through the `processResults()`, `processVerification()`, and `actionComplete()` functions, and report failures with `processError()`. These remain the behavior for any connector that targets a version below 2.0.
+
+---
 ## Variables
 
 Any variables that have been specified in `ui-config.json` are set before the script is executed. For example, the Mastodon connector specifies the following inputs:
@@ -379,7 +414,9 @@ The Tapestry app will call the following functions in `plugin.js` when it needs 
 These functions are asynchronous (they may be declared `async` and/or return a Promise). `load()`, `performAction()`, and `verify()` report their results by returning a value, and report a failure by throwing an `Error`.
 
 ---
-### verify()
+### verify
+
+`verify()`
 
 Determines if a site is reachable and gathers properties for the feed. Once verification succeeds a feed can be saved by a user.
 
@@ -407,7 +444,9 @@ If `icon` or `displayName` are omitted, then the ones supplied by `accountIdenti
 > **Compatibility:** Before 2.0, the result was reported by calling `processVerification()` (and failures via `processError()`) rather than returned/thrown.
 
 ---
-### load()
+### load
+
+`load()`
 
 Implement this function to load new data and return it as an `Array` of `Item` objects. Throw an `Error` to report a failure. Variables can be used to determine what to load — for example, whether to include mentions on Mastodon or not.
 
@@ -416,7 +455,9 @@ Optionally, you can deliver items incrementally — for example, from several se
 > **Compatibility:** Before 2.0, `load()` returned nothing — results were always delivered with `processResults()` and the load ended when its `isComplete` flag was true, and errors were reported with `processError()`.
 
 ---
-### performAction(actionId, item)
+### performAction
+
+`performAction(actionId, item)`
 
 Tapestry calls this function when an action needs to be performed by the connector.
 
@@ -437,7 +478,9 @@ See the section on `actions.json` for more information on how to define and perf
 The following functions are available to the script to help it perform the actions listed above.
 
 ---
-### sendRequest(url, method, parameters, extraHeaders, fullResponse) → Promise
+### sendRequest
+
+`sendRequest(url, method, parameters, extraHeaders, fullResponse) → Promise`
 
 Sends a request. If configured, a bearer token will be included with the request automatically.
 
@@ -517,7 +560,9 @@ async function verify() {
 > **Note:** The JavaScript code doesn’t have access to the OAuth access token (for security, no authentication information is exposed to the connector). If an access token is needed in a list of `parameters`, use `__ACCESS_TOKEN__` — it will be substituted before the request is sent to the endpoint.
 
 ---
-### sendConditionalRequest(url, method, parameters, extraHeaders, fullResponse) → Promise
+### sendConditionalRequest
+
+`sendConditionalRequest(url, method, parameters, extraHeaders, fullResponse) → Promise`
 
 This performs an [HTTP conditional request](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Conditional_requests). 
 
@@ -532,7 +577,18 @@ For feed-like data sources (such as RSS), this often results in a very significa
 > **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
 
 ---
-### processResults(results)
+### lookupIcon
+
+`lookupIcon(url) → Promise`
+
+  * url: `String` with a path to an HTML page
+  
+Returns a `Promise` with a resolve handler that includes a `String` parameter with a path to an icon for the page. If no icon can be found, a `null` value is returned.
+
+---
+### processResults
+
+`processResults(results)`
 
 Delivers a batch of retrieved items to the Tapestry app. Call this from `load()` to deliver items incrementally as they arrive (for example, from several separate requests). The load ends when `load()` returns. See the [Mastodon connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.joinmastodon/plugin.js) for an example.
 
@@ -541,7 +597,9 @@ Delivers a batch of retrieved items to the Tapestry app. Call this from `load()`
 > **Compatibility:** Before 2.0, `processResults(results, isComplete)` took a second `Boolean` argument (default true) that ended the load when true — connectors making several requests needed a reference counter to know when to set it. On 2.0+, completion is signaled by `load()` returning and the `isComplete` argument is ignored.
 
 ---
-### processError(error) [deprecated]
+### processError
+
+`processError(error)` *(deprecated)*
 
 > **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, throw an `Error` from `load()`, `performAction()`, or `verify()` instead — it reports the failure the same way.
 
@@ -550,14 +608,32 @@ Sends an error to the Tapestry app for display.
   * error: `Error` which indicates what went wrong. Will be displayed in the user interface.
 
 ---
-### processVerification(verification) [deprecated]
+### processVerification
+
+`processVerification(verification)` *(deprecated)*
 
 > **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `verify()` returns the verification result (or throws) — see `verify()`.
 
 Reports the result of verification. The `verification` value — a result `Object` or a `String` display name — takes the same form documented under `verify()`.
 
 ---
-### xmlParse(text) → (Object | Promise)
+### actionComplete
+
+`actionComplete(results, error)` *(deprecated)*
+
+> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `performAction()` returns its result (an `Item`, an `Array` of `Item`s, or nothing) and throws an `Error` to report a failure — see `performAction()`.
+
+Indicates that the action has been performed. Must be called.
+
+  * results: An `Item` or Array of `Item`s that were updated. A null value indicates there were no results.
+  * error: If not null, the `Error` indicates what went wrong and will be displayed in the user interface.
+
+See section on `actions.json` for more information on how to complete actions. (Returning an array of `Item`s requires `minimum_app_version="1.4"` or higher.)
+
+---
+### xmlParse
+
+`xmlParse(text) → Object | Promise`
 
   * text: `String` is the text representation of the XML data.
 
@@ -693,7 +769,9 @@ This functionality should be enough to parse XML generated from hierarchical dat
 > **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
 
 ---
-### plistParse(text) → (Object | Promise)
+### plistParse
+
+`plistParse(text) → Object | Promise`
 
   * text: `String` is the text representation of the property list data formatted as XML.
 
@@ -706,7 +784,9 @@ Note that old style property lists or JSON property lists are not supported.
 > **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
 
 ---
-### extractProperties(text) → (Object | Promise)
+### extractProperties
+
+`extractProperties(text) → Object | Promise`
 
   * text: `String` is HTML content with `<meta>` properties (such as Open Graph).
 
@@ -719,14 +799,9 @@ The `Object` representation contains the HTML’s properties. These values can b
 > **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
 
 ---
-### lookupIcon(url) → Promise
+### setItem
 
-  * url: `String` with a path to an HTML page
-  
-Returns a `Promise` with a resolve handler that includes a `String` parameter with a path to an icon for the page. If no icon can be found, a `null` value is returned.
-
----
-### setItem(key, value)
+`setItem(key, value)`
 
   * key: `String` a key for value being stored.
   * value: `String` to be saved in local storage.
@@ -734,31 +809,25 @@ Returns a `Promise` with a resolve handler that includes a `String` parameter wi
 Items can be removed from local storage by passing a `null` value. The amount of local storage is limited to 100,000 total characters and any items set beyond that threshold will be ignored.
   
 ---
-### getItem(key) → String
+### getItem
+
+`getItem(key) → String`
 
   * key: `String` a key for value that was stored.
   
 Returns a `String` that was saved in local storage. If no value was stored, `null` is returned.
 
 ---
-### clearItems()
+### clearItems
+
+`clearItems()`
 
 All items in local storage are removed.
 
 ---
-### actionComplete(results, error) [deprecated]
+### require
 
-> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `performAction()` returns its result (an `Item`, an `Array` of `Item`s, or nothing) and throws an `Error` to report a failure — see `performAction()`.
-
-Indicates that the action has been performed. Must be called.
-
-  * results: An `Item` or Array of `Item`s that were updated. A null value indicates there were no results.
-  * error: If not null, the `Error` indicates what went wrong and will be displayed in the user interface.
-
-See section on `actions.json` for more information on how to complete actions. (Returning an array of `Item`s requires `minimum_app_version="1.4"` or higher.)
-
----
-### require(resourceName) → Value | Object | String | false
+`require(resourceName) → Value | Object | String | false`
 
   * resourceName: `String` with the name of a text resource to load.
   
@@ -796,7 +865,9 @@ else {
 If you have used Node.js’s module loading, the approach above is very similar approach. Note that there is no need to export functions from the .js file that is being loaded: all functions and variables in the file are exported.
 
 ---
-### raiseCondition(condition, title, description)
+### raiseCondition
+
+`raiseCondition(condition, title, description)`
 
 Raises an persistent error condition that will be presented as a fatal error to the user:
 
@@ -816,14 +887,15 @@ Any other `type` is ignored.
 Each connector is defined using the following files:
 
   * `plugin-config.json` (Required)
-  * `plugin.js` (Required)
   * `ui-config.json` (Optional)
+  * `plugin.js` (Required)
   * `README.md` (Recommended)
   * `suggestions.json` (Optional)
+  * `apps.json` (Optional)
   * `discovery.json` (Optional)
   * `actions.json` (Optional)
   
-The contents of each of these files is discussed below.
+The contents of each of these files is discussed below, in the same order.
 
 ---
 ### plugin-config.json
