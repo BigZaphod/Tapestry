@@ -5,45 +5,34 @@ if (require('bluesky-shared.js') === false) {
     throw new Error("Failed to load bluesky-shared.js");
 }
 
-function verify() {
-	sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		const did = jsonObject.did;
-		setItem("did", did);
-		
-		const profileHandle = "@" + jsonObject.handle;
+async function verify() {
+	const profileText = await sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`);
+	const profile = JSON.parse(profileText);
 
-		sendRequest(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
-		
-			const feedName = jsonObject.view.displayName;
-			const feedAvatar = jsonObject.view.avatar;
-			const displayName = `${feedName} by ${profileHandle}`;
+	const did = profile.did;
+	setItem("did", did);
 
-			setItem("feedName", feedName);
-			setItem("feedAvatar", feedAvatar);
+	const profileHandle = "@" + profile.handle;
 
-			if (feedAvatar != null) {
-				const verification = {
-					displayName: displayName,
-					icon: feedAvatar
-				};
-				processVerification(verification);
-			}
-			else {
-				processVerification(displayName);
-			}
-		})
-		.catch((requestError) => {
-			processError(requestError);
-		});
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	const feedText = await sendRequest(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`);
+	const feed = JSON.parse(feedText);
+
+	const feedName = feed.view.displayName;
+	const feedAvatar = feed.view.avatar;
+	const displayName = `${feedName} by ${profileHandle}`;
+
+	setItem("feedName", feedName);
+	setItem("feedAvatar", feedAvatar);
+
+	if (feedAvatar != null) {
+		return {
+			displayName: displayName,
+			icon: feedAvatar
+		};
+	}
+	else {
+		return displayName;
+	}
 }
 
 async function load() {
@@ -61,15 +50,7 @@ async function load() {
 		setItem("feedAvatar", results[1]);
 	}
 
-	queryFeedForGenerator(did, feedId, feedName, feedAvatar)
-	.then((results) =>  {
-		console.log(`finished did ${did}, feed ${feedId}`);
-		processResults(results, true);
-	})
-	.catch((requestError) => {
-		console.log(`error did ${did}, feed ${feedId}`);
-		processError(requestError);
-	});	
+	return await queryFeedForGenerator(did, feedId, feedName, feedAvatar);
 }
 
 function queryFeedForGenerator(did, feedId, feedName, feedAvatar) {

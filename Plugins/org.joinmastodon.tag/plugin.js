@@ -5,37 +5,23 @@ if (require('mastodon-shared.js') === false) {
 	throw new Error("Failed to load mastodon-shared.js");
 }
 
-function verify() {
+async function verify() {
 	const verifyTag = normalizeTag(tag);
 	const url = `${site}/api/v1/timelines/tag/${verifyTag}`;
-	sendRequest(url)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		if (jsonObject.length > 0) {
-			const displayName = "#" + verifyTag;
-			processVerification(displayName);
-		}
-		else {
-			processError(Error("No items for tag."));
-		}
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	const text = await sendRequest(url);
+	const jsonObject = JSON.parse(text);
+
+	if (jsonObject.length > 0) {
+		return "#" + verifyTag;
+	}
+	else {
+		throw new Error("No items for tag.");
+	}
 }
 
-function load() {
+async function load() {
 	const loadTag = normalizeTag(tag);
-	queryStatusesForTag(loadTag)
-	.then((results) =>  {
-		console.log(`finished (cached) feed`);
-		processResults(results, true);
-	})
-	.catch((requestError) => {
-		console.log(`error (cached) feed`);
-		processError(requestError);
-	});	
+	return await queryStatusesForTag(loadTag);
 }
 
 function queryStatusesForTag(tag) {

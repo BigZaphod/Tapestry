@@ -275,39 +275,39 @@ async function performAction(actionId, item) {
 		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
 		item.removeAction("favorite");
 		item.addAction("unfavorite");
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "unfavorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unfavourite`, "POST");
 		item.removeAction("unfavorite");
 		item.addAction("favorite");
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "boost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/reblog`, "POST");
 		item.removeAction("boost");
 		item.addAction("unboost");
 		item.annotations = [Annotation.createWithText("Boosted by you")];
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "unboost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unreblog`, "POST");
 		item.removeAction("unboost");
 		item.addAction("boost");
 		item.annotations = [];
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "bookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/bookmark`, "POST");
 		item.removeAction("bookmark");
 		item.addAction("unbookmark");
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "unbookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unbookmark`, "POST");
 		item.removeAction("unbookmark");
 		item.addAction("bookmark");
-		actionComplete(item);
+		return item;
 	}
 	else if (actionId == "thread" || actionId == "replies") {
 		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}/context`));
@@ -319,7 +319,7 @@ async function performAction(actionId, item) {
 		for (const item of context["descendants"]) {
 			results.push(postForItem(item));
 		}
-		actionComplete(results);
+		return results;
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

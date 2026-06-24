@@ -584,164 +584,158 @@ function bytesToString(bytes) {
 async function performAction(actionId, item) {
 	const metadata = item.metadata;
 	
-	try {
-		let did = getItem("did");
-		if (did == null) {
-			did = await getSessionDid();
-			setItem("did", did);
-		}
-
-		let date = new Date().toISOString();
-		if (actionId == "like") {
-			const body = {
-				collection: "app.bsky.feed.like",
-				repo: did,
-				record : {
-					"$type": "app.bsky.feed.like",
-					subject: {
-						uri: metadata.uri,
-						cid: metadata.cid
-					},
-					createdAt: date,
-				}
-			};
-			
-			const url = `${site}/xrpc/com.atproto.repo.createRecord`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-			const jsonObject = JSON.parse(text);
-			const rkey = jsonObject.uri.split("/").pop();
-			
-			metadata.likeRkey = rkey;
-			item.metadata = metadata;
-			item.removeAction("like");
-			item.addAction("unlike");
-			actionComplete(item, null);
-		}
-		else if (actionId == "unlike") {
-			const body = {
-				collection: "app.bsky.feed.like",
-				repo: did,
-				rkey: metadata.likeRkey
-			};
-			
-			const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-			const jsonObject = JSON.parse(text);
-
-			item.removeAction("unlike");
-			item.addAction("like");
-			actionComplete(item, null);
-		}
-		else if (actionId == "repost") {
-			const body = {
-				collection: "app.bsky.feed.repost",
-				repo: did,
-				record : {
-					"$type": "app.bsky.feed.repost",
-					subject: {
-						uri: metadata.uri,
-						cid: metadata.cid
-					},
-					createdAt: date,
-				}
-			};
-			
-			const url = `${site}/xrpc/com.atproto.repo.createRecord`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-			const jsonObject = JSON.parse(text);
-			const rkey = jsonObject.uri.split("/").pop();
-			
-			metadata.repostRkey = rkey;
-			item.metadata = metadata;
-			item.removeAction("repost");
-			item.addAction("unrepost");
-			actionComplete(item, null);
-		}
-		else if (actionId == "unrepost") {
-			const body = {
-				collection: "app.bsky.feed.repost",
-				repo: did,
-				rkey: metadata.repostRkey
-			};
-			
-			const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-			const jsonObject = JSON.parse(text);
-			
-			item.removeAction("unrepost");
-			item.addAction("repost");
-			actionComplete(item, null);
-		}
-		else if (actionId == "save") {
-			const body = {
-				uri: metadata.uri,
-				cid: metadata.cid
-			};
-			
-			const url = `${site}/xrpc/app.bsky.bookmark.createBookmark`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-
-			item.removeAction("save");
-			item.addAction("unsave");
-			actionComplete(item);
-		}
-		else if (actionId == "unsave") {
-			const body = {
-				uri: metadata.uri
-			};
-
-			const url = `${site}/xrpc/app.bsky.bookmark.deleteBookmark`;
-			const parameters = JSON.stringify(body);
-			const extraHeaders = { "content-type": "application/json" };
-			const text = await sendRequest(url, "POST", parameters, extraHeaders);
-			
-			item.removeAction("unsave");
-			item.addAction("save");
-			actionComplete(item);
-		}
-		else if (actionId == "thread" || actionId == "replies") {
-			const uri = metadata.uri;
-			const response = await sendRequest(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`);
-			const json = JSON.parse(response);
-			const firstItem = json["thread"];
-			
-			let results = [];
-			let parents = parentsForItem(firstItem, true);
-			results.push(...parents);
-			
-			// NOTE: This is a workaround for a problem with the media attachments on Bluesky. The paths for videos end
-			// in .m3u8, which is a container format that can contain audio or video. This connector explicitly sets the
-			// MIME type to video/mp4, but that's converted to a .movie UTType internally by Tapestry. The item that's provided
-			// to this action gets a MIME type that's generated from the path extension, and that's returned as audio. The
-			// result is that the videos no longer play.
-			//
-			// To fix this, we create a new post for the item returned by the API, and patch the attachments (preserving other
-			// attributes like annotations and dates).
-			const patchPost = postForItem(firstItem, true);
-			item.attachments = patchPost.attachments;
-			results.push(item);
-			
-			for (const reply of firstItem.replies) {
-				results.push(postForItem(reply, true));
-			}
-			actionComplete(results);
-		}		
-		else {
-			let error = new Error(`actionId "${actionId}" not implemented`);
-			actionComplete(null, error);
-		}
+	let did = getItem("did");
+	if (did == null) {
+		did = await getSessionDid();
+		setItem("did", did);
 	}
-	catch (error) {
-		actionComplete(null, error);
+
+	let date = new Date().toISOString();
+	if (actionId == "like") {
+		const body = {
+			collection: "app.bsky.feed.like",
+			repo: did,
+			record : {
+				"$type": "app.bsky.feed.like",
+				subject: {
+					uri: metadata.uri,
+					cid: metadata.cid
+				},
+				createdAt: date,
+			}
+		};
+
+		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		const jsonObject = JSON.parse(text);
+		const rkey = jsonObject.uri.split("/").pop();
+
+		metadata.likeRkey = rkey;
+		item.metadata = metadata;
+		item.removeAction("like");
+		item.addAction("unlike");
+		return item;
+	}
+	else if (actionId == "unlike") {
+		const body = {
+			collection: "app.bsky.feed.like",
+			repo: did,
+			rkey: metadata.likeRkey
+		};
+
+		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		const jsonObject = JSON.parse(text);
+
+		item.removeAction("unlike");
+		item.addAction("like");
+		return item;
+	}
+	else if (actionId == "repost") {
+		const body = {
+			collection: "app.bsky.feed.repost",
+			repo: did,
+			record : {
+				"$type": "app.bsky.feed.repost",
+				subject: {
+					uri: metadata.uri,
+					cid: metadata.cid
+				},
+				createdAt: date,
+			}
+		};
+
+		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		const jsonObject = JSON.parse(text);
+		const rkey = jsonObject.uri.split("/").pop();
+
+		metadata.repostRkey = rkey;
+		item.metadata = metadata;
+		item.removeAction("repost");
+		item.addAction("unrepost");
+		return item;
+	}
+	else if (actionId == "unrepost") {
+		const body = {
+			collection: "app.bsky.feed.repost",
+			repo: did,
+			rkey: metadata.repostRkey
+		};
+
+		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		const jsonObject = JSON.parse(text);
+
+		item.removeAction("unrepost");
+		item.addAction("repost");
+		return item;
+	}
+	else if (actionId == "save") {
+		const body = {
+			uri: metadata.uri,
+			cid: metadata.cid
+		};
+
+		const url = `${site}/xrpc/app.bsky.bookmark.createBookmark`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+
+		item.removeAction("save");
+		item.addAction("unsave");
+		return item;
+	}
+	else if (actionId == "unsave") {
+		const body = {
+			uri: metadata.uri
+		};
+
+		const url = `${site}/xrpc/app.bsky.bookmark.deleteBookmark`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+
+		item.removeAction("unsave");
+		item.addAction("save");
+		return item;
+	}
+	else if (actionId == "thread" || actionId == "replies") {
+		const uri = metadata.uri;
+		const response = await sendRequest(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`);
+		const json = JSON.parse(response);
+		const firstItem = json["thread"];
+
+		let results = [];
+		let parents = parentsForItem(firstItem, true);
+		results.push(...parents);
+
+		// NOTE: This is a workaround for a problem with the media attachments on Bluesky. The paths for videos end
+		// in .m3u8, which is a container format that can contain audio or video. This connector explicitly sets the
+		// MIME type to video/mp4, but that's converted to a .movie UTType internally by Tapestry. The item that's provided
+		// to this action gets a MIME type that's generated from the path extension, and that's returned as audio. The
+		// result is that the videos no longer play.
+		//
+		// To fix this, we create a new post for the item returned by the API, and patch the attachments (preserving other
+		// attributes like annotations and dates).
+		const patchPost = postForItem(firstItem, true);
+		item.attachments = patchPost.attachments;
+		results.push(item);
+
+		for (const reply of firstItem.replies) {
+			results.push(postForItem(reply, true));
+		}
+		return results;
+	}
+	else {
+		throw new Error(`actionId "${actionId}" not implemented`);
 	}
 }

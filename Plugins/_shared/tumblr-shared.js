@@ -4,141 +4,119 @@
 async function performAction(actionId, item) {
 	const metadata = item.metadata;
 
-	try {
-		let blogName = getItem("blogName");
-		if (blogName == null) {
-			blogName = getBlogName(await getUserInfo());
-			setItem("blogName", blogName);
-		}
-
-		const parameters = JSON.stringify({ id: metadata.id, reblog_key: metadata.reblog_key });
-		if (actionId == "like") {
-			const url = `${site}/v2/user/like`;
-			const jsonObject = await sendAction(url, parameters);
-			if (jsonObject != null) {
-				if (jsonObject?.meta?.status == 200) {			
-					item.removeAction("like");
-					item.addAction("unlike");
-					actionComplete(item, null);
-				}
-				else {
-					let error = new Error(`Like failed with ${jsonObject?.meta?.status}`);
-					actionComplete(null, error);
-				}
-			}
-		}
-		else if (actionId == "unlike") {
-			const url = `${site}/v2/user/unlike`;
-			const jsonObject = await sendAction(url, parameters);
-			if (jsonObject != null) {
-				if (jsonObject?.meta?.status == 200) {			
-					item.removeAction("unlike");
-					item.addAction("like");
-					actionComplete(item, null);
-				}
-				else {
-					let error = new Error(`Unlike failed with ${jsonObject?.meta?.status}`);
-					actionComplete(null, error);
-				}
-			}
-		}
-		else if (actionId == "reblog") {
-			const url = `${site}/v2/blog/${blogName}/post/reblog`;
-			const jsonObject = await sendAction(url, parameters);
-			if (jsonObject != null) {
-				if (jsonObject?.meta?.status == 201) {
-					item.removeAction("reblog");
-					item.addAction("unreblog");
-					actionComplete(item, null);
-				}
-				else {
-					let error = new Error(`Reblog failed with ${jsonObject?.meta?.status}`);
-					actionComplete(null, error);
-				}
-			}
-		}
- 		else if (actionId == "unreblog") {
- 			// the unreblog action is ignored (the post needs to be removed on the Tumblr site)
-			actionComplete(null, null);
- 		}
- 		else if (actionId == "notes" || actionId == "trail") {
-			const postUrl = `${site}/v2/blog/${metadata.blog_name}/posts/${metadata.id}`;
-			const notesUrl = `${site}/v2/blog/${metadata.blog_name}/notes?id=${metadata.id}&mode=all`;
-			const originalPostUrl = `${site}/v2/blog/${metadata.original_blog_name}/posts/${metadata.original_id}`;
-
-			const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
-
-			// try to get the original post to replace the reblogged post			
-			let originalPost = null;
-			try {
-				const originalPostResponse = await sendRequest(originalPostUrl, "GET", null, extraHeaders);
-				const originalPostJson = JSON.parse(originalPostResponse);
-				const originalPostItem = originalPostJson.response;
-				originalPost = postForItem(originalPostItem);
-			}
-			catch (error) {
-				console.log(`notes: original error = ${error}`);
-			}
-
-			let trailPosts = [];
-			try {
-				const postResponse = await sendRequest(postUrl, "GET", null, extraHeaders);
-				const postJson = JSON.parse(postResponse);
-				const postItem = postJson.response;
-				if (originalPost == null) {
-					originalPost = postForItem(postItem);
-				}
-				if (postItem.trail != null && postItem.trail.length > 1) {
-					let trails = postItem.trail.slice(1);
-					for (const trail of trails) {
-						const post = await postForTrail(trail, originalPost.date);
-						if (post != null) {
-							trailPosts.push(post);
-						}
-					}
-				}
-			}
-			catch (error) {
-				console.log(`notes: post error = ${error}`);
-			}
-
-			let notePosts = [];
-			try {
-				const notesResponse = await sendRequest(notesUrl, "GET", null, extraHeaders);
-				const notesJson = JSON.parse(notesResponse);
-				const notes = notesJson?.response.notes;
-				for (const note of notes) {
-					const post = postForNote(note);
-					if (post != null) {
-						notePosts.push(post);
-					}
-				}
-			}
-			catch (error) {
-				console.log(`notes: notes error = ${error}`);
-			}
-
-			let results = [];
-
-			if (originalPost != null) {
-				results.push(originalPost);
-			}
-			else {
-				results.push(item);
-			}
-			results.push(...trailPosts);
-			results.push(...notePosts);
-
-			
-			actionComplete(results);
- 		}
-		else {
-			let error = new Error(`actionId "${actionId}" not implemented`);
-			actionComplete(null, error);
-		}
+	let blogName = getItem("blogName");
+	if (blogName == null) {
+		blogName = getBlogName(await getUserInfo());
+		setItem("blogName", blogName);
 	}
-	catch (error) {
-		actionComplete(null, error);
+
+	const parameters = JSON.stringify({ id: metadata.id, reblog_key: metadata.reblog_key });
+	if (actionId == "like") {
+		const url = `${site}/v2/user/like`;
+		const jsonObject = await sendAction(url, parameters);
+		if (jsonObject?.meta?.status == 200) {
+			item.removeAction("like");
+			item.addAction("unlike");
+			return item;
+		}
+		throw new Error(`Like failed with ${jsonObject?.meta?.status}`);
+	}
+	else if (actionId == "unlike") {
+		const url = `${site}/v2/user/unlike`;
+		const jsonObject = await sendAction(url, parameters);
+		if (jsonObject?.meta?.status == 200) {
+			item.removeAction("unlike");
+			item.addAction("like");
+			return item;
+		}
+		throw new Error(`Unlike failed with ${jsonObject?.meta?.status}`);
+	}
+	else if (actionId == "reblog") {
+		const url = `${site}/v2/blog/${blogName}/post/reblog`;
+		const jsonObject = await sendAction(url, parameters);
+		if (jsonObject?.meta?.status == 201) {
+			item.removeAction("reblog");
+			item.addAction("unreblog");
+			return item;
+		}
+		throw new Error(`Reblog failed with ${jsonObject?.meta?.status}`);
+	}
+	else if (actionId == "unreblog") {
+		// the unreblog action is ignored (the post needs to be removed on the Tumblr site)
+		return;
+	}
+	else if (actionId == "notes" || actionId == "trail") {
+		const postUrl = `${site}/v2/blog/${metadata.blog_name}/posts/${metadata.id}`;
+		const notesUrl = `${site}/v2/blog/${metadata.blog_name}/notes?id=${metadata.id}&mode=all`;
+		const originalPostUrl = `${site}/v2/blog/${metadata.original_blog_name}/posts/${metadata.original_id}`;
+
+		const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
+
+		// try to get the original post to replace the reblogged post
+		let originalPost = null;
+		try {
+			const originalPostResponse = await sendRequest(originalPostUrl, "GET", null, extraHeaders);
+			const originalPostJson = JSON.parse(originalPostResponse);
+			const originalPostItem = originalPostJson.response;
+			originalPost = postForItem(originalPostItem);
+		}
+		catch (error) {
+			console.log(`notes: original error = ${error}`);
+		}
+
+		let trailPosts = [];
+		try {
+			const postResponse = await sendRequest(postUrl, "GET", null, extraHeaders);
+			const postJson = JSON.parse(postResponse);
+			const postItem = postJson.response;
+			if (originalPost == null) {
+				originalPost = postForItem(postItem);
+			}
+			if (postItem.trail != null && postItem.trail.length > 1) {
+				let trails = postItem.trail.slice(1);
+				for (const trail of trails) {
+					const post = await postForTrail(trail, originalPost.date);
+					if (post != null) {
+						trailPosts.push(post);
+					}
+				}
+			}
+		}
+		catch (error) {
+			console.log(`notes: post error = ${error}`);
+		}
+
+		let notePosts = [];
+		try {
+			const notesResponse = await sendRequest(notesUrl, "GET", null, extraHeaders);
+			const notesJson = JSON.parse(notesResponse);
+			const notes = notesJson?.response.notes;
+			for (const note of notes) {
+				const post = postForNote(note);
+				if (post != null) {
+					notePosts.push(post);
+				}
+			}
+		}
+		catch (error) {
+			console.log(`notes: notes error = ${error}`);
+		}
+
+		let results = [];
+
+		if (originalPost != null) {
+			results.push(originalPost);
+		}
+		else {
+			results.push(item);
+		}
+		results.push(...trailPosts);
+		results.push(...notePosts);
+
+		return results;
+	}
+	else {
+		throw new Error(`actionId "${actionId}" not implemented`);
 	}
 }
 
@@ -153,9 +131,7 @@ async function sendAction(url, parameters) {
 	const response = JSON.parse(text);
 	if (response.status == 401) {
 		raiseAuthorizationUpdate();
-		const authorizationError = new Error("Tumblr authorization is invalid");
-		actionComplete(null, authorizationError);
-		return null;
+		throw new Error("Tumblr authorization is invalid");
 	}
 	else {
 		return JSON.parse(response.body);

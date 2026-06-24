@@ -5,28 +5,22 @@ if (require('mastodon-shared.js') === false) {
 	throw new Error("Failed to load mastodon-shared.js");
 }
 
-function verify() {
-	sendRequest(site + "/api/v1/accounts/verify_credentials")
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		const instance = site.split("/")[2] ?? "";
-		const accountName = jsonObject["display_name"];
-		const fullUsername = "@" + jsonObject["username"] + "@" + instance;
-		const icon = jsonObject["avatar"];
+async function verify() {
+	const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
+	const jsonObject = JSON.parse(text);
 
-		const userId = jsonObject["id"];
-		setItem("userId", userId);
+	const instance = site.split("/")[2] ?? "";
+	const accountName = jsonObject["display_name"];
+	const fullUsername = "@" + jsonObject["username"] + "@" + instance;
+	const icon = jsonObject["avatar"];
 
-		const verification = {
-			displayName: fullUsername,
-			accountIdentity: Identity.create(accountName, fullUsername, icon)
-		};
-		processVerification(verification);
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	const userId = jsonObject["id"];
+	setItem("userId", userId);
+
+	return {
+		displayName: fullUsername,
+		accountIdentity: Identity.create(accountName, fullUsername, icon)
+	};
 }
 
 var userId = getItem("userId");
@@ -57,7 +51,7 @@ async function load() {
 		const parameters = await queryHomeTimeline(endDate, followedTagNames);
   		const results = parameters[0];
   		const newestItemDate = parameters[1];
-		processResults(results, false);
+		processResults(results);
 		if (newestItemDate) {
 			setItem("endDateTimestamp", String(newestItemDate.getTime()));
 		}
@@ -68,7 +62,7 @@ async function load() {
 		console.log(`==== MENTIONS START`);
 		const results = await queryMentions();
 		console.log(`==== MENTIONS END results = ${results.length}`);
-		processResults(results, false);
+		processResults(results);
 	}
 
 	if (includeStatuses == "on") {
@@ -76,7 +70,7 @@ async function load() {
 		if (userId != null) {
 			const results = await queryStatusesForUser(userId);
 			console.log(`==== STATUSES END results = ${results.length}`);
-			processResults(results, false);
+			processResults(results);
 		}
 		else {
 			const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
@@ -87,14 +81,13 @@ async function load() {
 
 			const results = await queryStatusesForUser(userId);
 			console.log(`==== STATUSES END results = ${results.length}`);
-			processResults(results, false);
+			processResults(results);
 		}
 		console.log(`==== STATUSES DONE`);
 	}
 
-	// All done.
+	// All done — returning from load() ends the load (items were delivered incrementally above).
 	console.log(`==== LOAD COMPLETE`);
-	processResults([], true);
 }
 
 function queryHomeTimeline(endDate, followedTagNames) {

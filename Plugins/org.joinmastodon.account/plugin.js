@@ -5,79 +5,46 @@ if (require('mastodon-shared.js') === false) {
 	throw new Error("Failed to load mastodon-shared.js");
 }
 
-function verify() {
+async function verify() {
 	const verifyAccount = normalizeAccount(account);
-	const url = `${site}/api/v1/accounts/lookup?acct=${verifyAccount}`
-	sendRequest(url)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		let displayName = "";
-		if (jsonObject.display_name != null && jsonObject.display_name.length > 0) {
-			displayName = jsonObject.display_name;
-		}
-		else {
-			displayName = "@" + jsonObject.username;
-		}
+	const url = `${site}/api/v1/accounts/lookup?acct=${verifyAccount}`;
+	const text = await sendRequest(url);
+	const jsonObject = JSON.parse(text);
 
-		const id = jsonObject.id;
-		setItem("id", id);
-		
-		if (jsonObject.avatar != null) {
-			const icon = jsonObject.avatar
-			const verification = {
-				displayName: displayName,
-				icon: icon
-			};
-			processVerification(verification);
-		}
-		else {
-			processVerification(displayName);
-		}
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
-}
-
-function load() {
-	var id = getItem("id");
-
-	if (id != null) {
-		queryStatusesForUser(id)
-		.then((results) =>  {
-			console.log(`finished (cached) feed`);
-			processResults(results, true);
-		})
-		.catch((requestError) => {
-			console.log(`error (cached) feed`);
-			processError(requestError);
-		});	
+	let displayName = "";
+	if (jsonObject.display_name != null && jsonObject.display_name.length > 0) {
+		displayName = jsonObject.display_name;
 	}
 	else {
-		const loadAccount = normalizeAccount(account);
-		const url = `${site}/api/v1/accounts/lookup?acct=${loadAccount}`
-		sendRequest(url)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
-		
-			const id = jsonObject.id;
-			setItem("id", id);
-		
-			queryStatusesForUser(id)
-			.then((results) =>  {
-				console.log(`finished feed`);
-				processResults(results, true);
-			})
-			.catch((requestError) => {
-				console.log(`error feed`);
-				processError(requestError);
-			});	
-		})
-		.catch((requestError) => {
-			processError(requestError);
-		});
+		displayName = "@" + jsonObject.username;
 	}
+
+	const id = jsonObject.id;
+	setItem("id", id);
+
+	if (jsonObject.avatar != null) {
+		return {
+			displayName: displayName,
+			icon: jsonObject.avatar
+		};
+	}
+	else {
+		return displayName;
+	}
+}
+
+async function load() {
+	var id = getItem("id");
+
+	if (id == null) {
+		const loadAccount = normalizeAccount(account);
+		const url = `${site}/api/v1/accounts/lookup?acct=${loadAccount}`;
+		const text = await sendRequest(url);
+		id = JSON.parse(text).id;
+		setItem("id", id);
+	}
+
+	return await queryStatusesForUser(id);
 }
 
 function queryStatusesForUser(id) {

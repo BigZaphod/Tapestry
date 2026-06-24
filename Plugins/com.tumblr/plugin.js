@@ -6,59 +6,47 @@ if (require('tumblr-shared.js') === false) {
 }
 
 async function verify() {
-	try {
-		const user = await getUserInfo();
-		const blogName = getBlogName(user);
-		setItem("blogName", blogName);
-		
-		const blogIcon = "https://api.tumblr.com/v2/blog/" + blogName + "/avatar/96";
-		const userIcon = "https://api.tumblr.com/v2/blog/" + user.name + "/avatar/96";
+	const user = await getUserInfo();
+	const blogName = getBlogName(user);
+	setItem("blogName", blogName);
 
-		const verification = {
-			displayName: blogName,
-			icon: blogIcon,
-			accountIdentity: Identity.create(user.name, null, userIcon)
-		};
-		processVerification(verification);
-	}
-	catch (error) {
-		processError(error);
-	}
+	const blogIcon = "https://api.tumblr.com/v2/blog/" + blogName + "/avatar/96";
+	const userIcon = "https://api.tumblr.com/v2/blog/" + user.name + "/avatar/96";
+
+	return {
+		displayName: blogName,
+		icon: blogIcon,
+		accountIdentity: Identity.create(user.name, null, userIcon)
+	};
 }
 
 async function load() {
 	let nowTimestamp = (new Date()).getTime();
 
-	try {
-		let blogName = getItem("blogName");
-		if (blogName == null) {
-			blogName = getBlogName(await getUserInfo());
-			setItem("blogName", blogName);
-		}
-	
-		// NOTE: The dashboard will be filled up to the endDate, if possible.
-		let endDate = null;
-		let endDateTimestamp = getItem("endDateTimestamp");
-		if (endDateTimestamp != null) {
-			endDate = new Date(parseInt(endDateTimestamp));
-		}
-	
-		let startTimestamp = (new Date()).getTime();
-		
-		const parameters = await queryDashboard(endDate);
-		const results = parameters[0];
-		const newestItemDate = parameters[1];
-		processResults(results, true);
-		if (newestItemDate) {
-			setItem("endDateTimestamp", String(newestItemDate.getTime()));
-		}
-		let endTimestamp = (new Date()).getTime();
-		console.log(`finished dashboard: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
+	let blogName = getItem("blogName");
+	if (blogName == null) {
+		blogName = getBlogName(await getUserInfo());
+		setItem("blogName", blogName);
 	}
-	catch (error) {
-		console.log(`error dashboard`);
-		processError(error);
+
+	// NOTE: The dashboard will be filled up to the endDate, if possible.
+	let endDate = null;
+	let endDateTimestamp = getItem("endDateTimestamp");
+	if (endDateTimestamp != null) {
+		endDate = new Date(parseInt(endDateTimestamp));
 	}
+
+	let startTimestamp = (new Date()).getTime();
+
+	const parameters = await queryDashboard(endDate);
+	const results = parameters[0];
+	const newestItemDate = parameters[1];
+	if (newestItemDate) {
+		setItem("endDateTimestamp", String(newestItemDate.getTime()));
+	}
+	let endTimestamp = (new Date()).getTime();
+	console.log(`finished dashboard: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
+	return results;
 }
 
 async function queryDashboard(endDate) {

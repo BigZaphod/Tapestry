@@ -5,38 +5,31 @@ if (require('bluesky-shared.js') === false) {
     throw new Error("Failed to load bluesky-shared.js");
 }
 
-function verify() {
+async function verify() {
 	let verifyAccount = normalizeAccount(account);
-	sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${verifyAccount}`)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		let displayName = "";
-		if (jsonObject.displayName != null && jsonObject.displayName.length > 0) {
-			displayName = jsonObject.displayName;
-		}
-		else {
-			displayName = "@" + jsonObject.handle;
-		}
+	const text = await sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${verifyAccount}`);
+	const jsonObject = JSON.parse(text);
 
-		const did = jsonObject.did;
-		setItem("did", did);
-		
-		if (jsonObject.avatar != null) {
-			const icon = jsonObject.avatar
-			const verification = {
-				displayName: displayName,
-				icon: icon
-			};
-			processVerification(verification);
-		}
-		else {
-			processVerification(displayName);
-		}
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	let displayName = "";
+	if (jsonObject.displayName != null && jsonObject.displayName.length > 0) {
+		displayName = jsonObject.displayName;
+	}
+	else {
+		displayName = "@" + jsonObject.handle;
+	}
+
+	const did = jsonObject.did;
+	setItem("did", did);
+
+	if (jsonObject.avatar != null) {
+		return {
+			displayName: displayName,
+			icon: jsonObject.avatar
+		};
+	}
+	else {
+		return displayName;
+	}
 }
 
 async function load() {
@@ -47,15 +40,7 @@ async function load() {
 		setItem("did", did);
 	}
 
-	queryFeedForUser(did)
-	.then((results) =>  {
-		console.log(`finished feed for ${did}`);
-		processResults(results, true);
-	})
-	.catch((requestError) => {
-		console.log(`error feed for ${did}`);
-		processError(requestError);
-	});	
+	return await queryFeedForUser(did);
 }
 
 function queryFeedForUser(did) {

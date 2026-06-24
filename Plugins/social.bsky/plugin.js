@@ -5,32 +5,21 @@ if (require('bluesky-shared.js') === false) {
     throw new Error("Failed to load bluesky-shared.js");
 }
 
-function verify() {
-	sendRequest(site + "/xrpc/com.atproto.server.getSession")
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		const username = "@" + jsonObject.handle;
-		const did = jsonObject.did;
+async function verify() {
+	const sessionText = await sendRequest(site + "/xrpc/com.atproto.server.getSession");
+	const session = JSON.parse(sessionText);
+	const username = "@" + session.handle;
+	const did = session.did;
 
-		setItem("did", did);
-		setItem("didSelf", did);
-		
-		sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${did}`)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
-			const verification = {
-				displayName: username,
-				accountIdentity: Identity.create(jsonObject.displayName, username, jsonObject.avatar)
-			};
-			processVerification(verification);
-		})
-		.catch((requestError) => {
-			processError(requestError);
-		});
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	setItem("did", did);
+	setItem("didSelf", did);
+
+	const profileText = await sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${did}`);
+	const profile = JSON.parse(profileText);
+	return {
+		displayName: username,
+		accountIdentity: Identity.create(profile.displayName, username, profile.avatar)
+	};
 }
 
 async function load() {
@@ -51,7 +40,7 @@ async function load() {
 		const parameters = await queryTimeline(endDate);
 		const results = parameters[0];
 		const newestItemDate = parameters[1];
-		processResults(results, false);
+		processResults(results);
 		if (newestItemDate != null) {
 			setItem("endDateTimestamp", String(newestItemDate.getTime()));
 		}
@@ -59,11 +48,10 @@ async function load() {
 	
 	if (includeMentions == "on" || includeReplies == "on") {
 		const results = await queryMentions();
-		processResults(results, false);
+		processResults(results);
 	}
 
-	// All done.
-	processResults([], true);
+	// All done — returning from load() ends the load (items were delivered incrementally above).
 }
 
 function queryTimeline(endDate) {

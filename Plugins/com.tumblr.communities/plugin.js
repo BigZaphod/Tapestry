@@ -6,62 +6,50 @@ if (require('tumblr-shared.js') === false) {
 }
 
 async function verify() {
-	try {
-		const response = await sendRequest(`${site}/v2/communities/${communityHandle}`);
-		const json = JSON.parse(response);
+	const response = await sendRequest(`${site}/v2/communities/${communityHandle}`);
+	const json = JSON.parse(response);
 
-		if (json.response.is_member == false) {
-			throw new Error("You are not a member of this community. Join it on Tumblr.");
-		}
-		
-		const displayName = json.response.title ?? communityHandle;
-		let communityIcon = null
-		if (json.response.avatar_image != null && json.response.avatar_image.length > 0) {
-			communityIcon = json.response.avatar_image[0].url;
-		}
-
-		const user = await getUserInfo();
-		const userIcon = "https://api.tumblr.com/v2/blog/" + user.name + "/avatar/96";
-
-		const verification = {
-			displayName: displayName,
-			icon: communityIcon,
-			accountIdentity: Identity.create(user.name, null, userIcon)
-		};
-		processVerification(verification);
+	if (json.response.is_member == false) {
+		throw new Error("You are not a member of this community. Join it on Tumblr.");
 	}
-	catch (error) {
-		processError(error);
+
+	const displayName = json.response.title ?? communityHandle;
+	let communityIcon = null
+	if (json.response.avatar_image != null && json.response.avatar_image.length > 0) {
+		communityIcon = json.response.avatar_image[0].url;
 	}
+
+	const user = await getUserInfo();
+	const userIcon = "https://api.tumblr.com/v2/blog/" + user.name + "/avatar/96";
+
+	return {
+		displayName: displayName,
+		icon: communityIcon,
+		accountIdentity: Identity.create(user.name, null, userIcon)
+	};
 }
 
 async function load() {
 	let nowTimestamp = (new Date()).getTime();
 
-	try {		
-		// NOTE: The timeline will be filled up to the endDate, if possible.
-		let endDate = null;
-		let endDateTimestamp = getItem("endDateTimestamp");
-		if (endDateTimestamp != null) {
-			endDate = new Date(parseInt(endDateTimestamp));
-		}
-	
-		let startTimestamp = (new Date()).getTime();
-		
-		const parameters = await queryTimeline(endDate);
-		const results = parameters[0];
-		const newestItemDate = parameters[1];
-		processResults(results, true);
-		if (newestItemDate) {
-			setItem("endDateTimestamp", String(newestItemDate.getTime()));
-		}
-		let endTimestamp = (new Date()).getTime();
-		console.log(`finished timeline: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
+	// NOTE: The timeline will be filled up to the endDate, if possible.
+	let endDate = null;
+	let endDateTimestamp = getItem("endDateTimestamp");
+	if (endDateTimestamp != null) {
+		endDate = new Date(parseInt(endDateTimestamp));
 	}
-	catch (error) {
-		console.log(`error timeline`);
-		processError(error);
+
+	let startTimestamp = (new Date()).getTime();
+
+	const parameters = await queryTimeline(endDate);
+	const results = parameters[0];
+	const newestItemDate = parameters[1];
+	if (newestItemDate) {
+		setItem("endDateTimestamp", String(newestItemDate.getTime()));
 	}
+	let endTimestamp = (new Date()).getTime();
+	console.log(`finished timeline: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
+	return results;
 }
 
 async function queryTimeline(endDate) {

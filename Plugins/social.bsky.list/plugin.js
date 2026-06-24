@@ -14,41 +14,30 @@ if (require('bluesky-shared.js') === false) {
 // API request:
 // https://api.bsky.app/xrpc/app.bsky.feed.getListFeed?list=at%3A%2F%2Fdid%3Aplc%3A7foutw3hvd7nqwwng5gsmuez%2Fapp.bsky.graph.list%2F3lml2frpysk2j
 
-function verify() {
-	sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		const did = jsonObject.did;
-		setItem("did", did);
-		
-		const profileHandle = "@" + jsonObject.handle;
+async function verify() {
+	const profileText = await sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`);
+	const profile = JSON.parse(profileText);
 
-		sendRequest(`${site}/xrpc/app.bsky.graph.getList?list=at://${did}/app.bsky.graph.list/${listId}`)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
-		
-			const avatar = jsonObject?.list?.avatar ?? jsonObject?.list?.creator?.avatar;
-			const listName = jsonObject.list.name;
-			const displayName = `${listName} by ${profileHandle}`;
-			if (avatar != null) {
-				const verification = {
-					displayName: displayName,
-					icon: avatar
-				};
-				processVerification(verification);
-			}
-			else {
-				processVerification(displayName);
-			}
-		})
-		.catch((requestError) => {
-			processError(requestError);
-		});
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	const did = profile.did;
+	setItem("did", did);
+
+	const profileHandle = "@" + profile.handle;
+
+	const listText = await sendRequest(`${site}/xrpc/app.bsky.graph.getList?list=at://${did}/app.bsky.graph.list/${listId}`);
+	const listObject = JSON.parse(listText);
+
+	const avatar = listObject?.list?.avatar ?? listObject?.list?.creator?.avatar;
+	const listName = listObject.list.name;
+	const displayName = `${listName} by ${profileHandle}`;
+	if (avatar != null) {
+		return {
+			displayName: displayName,
+			icon: avatar
+		};
+	}
+	else {
+		return displayName;
+	}
 }
 
 async function load() {
@@ -58,15 +47,7 @@ async function load() {
 		setItem("did", did);
 	}
 
-	queryList(did, listId)
-	.then((results) =>  {
-		console.log(`finished did ${did}, list ${listId}`);
-		processResults(results, true);
-	})
-	.catch((requestError) => {
-		console.log(`error did ${did}, list ${listId}`);
-		processError(requestError);
-	});	
+	return await queryList(did, listId);
 }
 
 function queryList(did, listId) {
