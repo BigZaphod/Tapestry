@@ -75,45 +75,28 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
             
     let content = contentForRecord(item.post.record);
         
-    let actions = {};
+    let metadata = { uri: item.post.uri, cid: item.post.cid };
+    let actions = [];
     if (includeActions) {
         if (item.post.viewer?.like != null) {
-            const rkey = item.post.viewer.like.split("/").pop();
-            const values = { uri: item.post.uri, cid: item.post.cid, rkey: rkey };
-            actions["unlike"] = JSON.stringify(values);
+            metadata.likeRkey = item.post.viewer.like.split("/").pop();
+            actions.push("unlike");
         }
         else {
-            const values = { uri: item.post.uri, cid: item.post.cid };
-            actions["like"] = JSON.stringify(values);
+            actions.push("like");
         }
         if (item.post.viewer?.repost != null) {
-            const rkey = item.post.viewer.repost.split("/").pop();
-            const values = { uri: item.post.uri, cid: item.post.cid, rkey: rkey };
-            actions["unrepost"] = JSON.stringify(values);
+            metadata.repostRkey = item.post.viewer.repost.split("/").pop();
+            actions.push("unrepost");
         }
         else {
-            const values = { uri: item.post.uri, cid: item.post.cid };
-            actions["repost"] = JSON.stringify(values);
+            actions.push("repost");
         }
         if (item.post.viewer?.bookmarked != null) {
-        	if (item.post.viewer?.bookmarked == false) {
-    			const values = { uri: item.post.uri, cid: item.post.cid };
-            	actions["save"] = JSON.stringify(values);
-            }
-            else {
-    			const values = { uri: item.post.uri, cid: item.post.cid };
-            	actions["unsave"] = JSON.stringify(values);
-            }
+            actions.push(item.post.viewer?.bookmarked == false ? "save" : "unsave");
         }
     }
-	if (item.post?.replyCount > 0) {
-		const values = { uri: item.post.uri, cid: item.post.cid };
-		actions["replies"] = JSON.stringify(values);
-	}
-	else {
-		const values = { uri: item.post.uri, cid: item.post.cid };
-		actions["thread"] = JSON.stringify(values);
-	}
+    actions.push(item.post?.replyCount > 0 ? "replies" : "thread");
 
     let contentWarning = null;
     if (item.post.labels != null && item.post.labels.length > 0) {
@@ -169,7 +152,10 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         const post = Item.createWithUriDate(postUri, date);
         post.body = content;
         post.author = identity;
-        post.actions = actions;
+        post.metadata = metadata;
+        for (const action of actions) {
+            post.addAction(action);
+        }
         if (attachments != null) {
             post.attachments = attachments
         }
@@ -595,9 +581,8 @@ function bytesToString(bytes) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, actionValue, item) {
-	let actions = item.actions;
-	let actionValues = JSON.parse(actionValue);
+async function performAction(actionId, item) {
+	const metadata = item.metadata;
 	
 	try {
 		let did = getItem("did");
@@ -614,8 +599,8 @@ async function performAction(actionId, actionValue, item) {
 				record : {
 					"$type": "app.bsky.feed.like",
 					subject: {
-						uri: actionValues["uri"],
-						cid: actionValues["cid"]
+						uri: metadata.uri,
+						cid: metadata.cid
 					},
 					createdAt: date,
 				}
@@ -628,17 +613,17 @@ async function performAction(actionId, actionValue, item) {
 			const jsonObject = JSON.parse(text);
 			const rkey = jsonObject.uri.split("/").pop();
 			
-			delete actions["like"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"], rkey: rkey };
-			actions["unlike"] = JSON.stringify(values);
-			item.actions = actions;
+			metadata.likeRkey = rkey;
+			item.metadata = metadata;
+			item.removeAction("like");
+			item.addAction("unlike");
 			actionComplete(item, null);
 		}
 		else if (actionId == "unlike") {
 			const body = {
 				collection: "app.bsky.feed.like",
 				repo: did,
-				rkey: actionValues["rkey"]
+				rkey: metadata.likeRkey
 			};
 			
 			const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
@@ -647,10 +632,8 @@ async function performAction(actionId, actionValue, item) {
 			const text = await sendRequest(url, "POST", parameters, extraHeaders);
 			const jsonObject = JSON.parse(text);
 
-			delete actions["unlike"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"] };
-			actions["like"] = JSON.stringify(values);
-			item.actions = actions;
+			item.removeAction("unlike");
+			item.addAction("like");
 			actionComplete(item, null);
 		}
 		else if (actionId == "repost") {
@@ -660,8 +643,8 @@ async function performAction(actionId, actionValue, item) {
 				record : {
 					"$type": "app.bsky.feed.repost",
 					subject: {
-						uri: actionValues["uri"],
-						cid: actionValues["cid"]
+						uri: metadata.uri,
+						cid: metadata.cid
 					},
 					createdAt: date,
 				}
@@ -674,17 +657,17 @@ async function performAction(actionId, actionValue, item) {
 			const jsonObject = JSON.parse(text);
 			const rkey = jsonObject.uri.split("/").pop();
 			
-			delete actions["repost"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"], rkey: rkey };
-			actions["unrepost"] = JSON.stringify(values);
-			item.actions = actions;
+			metadata.repostRkey = rkey;
+			item.metadata = metadata;
+			item.removeAction("repost");
+			item.addAction("unrepost");
 			actionComplete(item, null);
 		}
 		else if (actionId == "unrepost") {
 			const body = {
 				collection: "app.bsky.feed.repost",
 				repo: did,
-				rkey: actionValues["rkey"]
+				rkey: metadata.repostRkey
 			};
 			
 			const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
@@ -693,16 +676,14 @@ async function performAction(actionId, actionValue, item) {
 			const text = await sendRequest(url, "POST", parameters, extraHeaders);
 			const jsonObject = JSON.parse(text);
 			
-			delete actions["unrepost"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"] };
-			actions["repost"] = JSON.stringify(values);
-			item.actions = actions;
+			item.removeAction("unrepost");
+			item.addAction("repost");
 			actionComplete(item, null);
 		}
 		else if (actionId == "save") {
 			const body = {
-				uri: actionValues["uri"],
-				cid: actionValues["cid"]
+				uri: metadata.uri,
+				cid: metadata.cid
 			};
 			
 			const url = `${site}/xrpc/app.bsky.bookmark.createBookmark`;
@@ -710,15 +691,13 @@ async function performAction(actionId, actionValue, item) {
 			const extraHeaders = { "content-type": "application/json" };
 			const text = await sendRequest(url, "POST", parameters, extraHeaders);
 
-			delete actions["save"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"] };
-			actions["unsave"] = JSON.stringify(values);
-			item.actions = actions;
+			item.removeAction("save");
+			item.addAction("unsave");
 			actionComplete(item);
 		}
 		else if (actionId == "unsave") {
 			const body = {
-				uri: actionValues["uri"]
+				uri: metadata.uri
 			};
 
 			const url = `${site}/xrpc/app.bsky.bookmark.deleteBookmark`;
@@ -726,14 +705,12 @@ async function performAction(actionId, actionValue, item) {
 			const extraHeaders = { "content-type": "application/json" };
 			const text = await sendRequest(url, "POST", parameters, extraHeaders);
 			
-			delete actions["unsave"];
-			const values = { uri: actionValues["uri"], cid: actionValues["cid"] };
-			actions["save"] = JSON.stringify(values);
-			item.actions = actions;
+			item.removeAction("unsave");
+			item.addAction("save");
 			actionComplete(item);
 		}
 		else if (actionId == "thread" || actionId == "replies") {
-			const uri = actionValues["uri"];
+			const uri = metadata.uri;
 			const response = await sendRequest(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`);
 			const json = JSON.parse(response);
 			const firstItem = json["thread"];

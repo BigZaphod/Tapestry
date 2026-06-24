@@ -12,6 +12,6 @@
 	"oauth_code_key": "code",
 	"oauth_scope": "create",
 	"oauth_grant_type": "authorization_code",
-	"minimum_app_version": "1.4",
-	"version": 5
+	"minimum_app_version": "2.0",
+	"version": 6
 }

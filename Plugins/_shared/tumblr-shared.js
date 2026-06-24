@@ -1,9 +1,8 @@
 
 // com.tumblr - shared
 
-async function performAction(actionId, actionValue, item) {
-	let actions = item.actions;
-	let actionValues = JSON.parse(actionValue);
+async function performAction(actionId, item) {
+	const metadata = item.metadata;
 
 	try {
 		let blogName = getItem("blogName");
@@ -12,15 +11,14 @@ async function performAction(actionId, actionValue, item) {
 			setItem("blogName", blogName);
 		}
 
-		let date = new Date().toISOString();
+		const parameters = JSON.stringify({ id: metadata.id, reblog_key: metadata.reblog_key });
 		if (actionId == "like") {
 			const url = `${site}/v2/user/like`;
-			const jsonObject = await sendAction(url, actionValue);
+			const jsonObject = await sendAction(url, parameters);
 			if (jsonObject != null) {
 				if (jsonObject?.meta?.status == 200) {			
-					delete actions["like"];
-					actions["unlike"] = actionValue;
-					item.actions = actions;
+					item.removeAction("like");
+					item.addAction("unlike");
 					actionComplete(item, null);
 				}
 				else {
@@ -31,12 +29,11 @@ async function performAction(actionId, actionValue, item) {
 		}
 		else if (actionId == "unlike") {
 			const url = `${site}/v2/user/unlike`;
-			const jsonObject = await sendAction(url, actionValue);
+			const jsonObject = await sendAction(url, parameters);
 			if (jsonObject != null) {
 				if (jsonObject?.meta?.status == 200) {			
-					delete actions["unlike"];
-					actions["like"] = actionValue;
-					item.actions = actions;
+					item.removeAction("unlike");
+					item.addAction("like");
 					actionComplete(item, null);
 				}
 				else {
@@ -47,12 +44,11 @@ async function performAction(actionId, actionValue, item) {
 		}
 		else if (actionId == "reblog") {
 			const url = `${site}/v2/blog/${blogName}/post/reblog`;
-			const jsonObject = await sendAction(url, actionValue);
+			const jsonObject = await sendAction(url, parameters);
 			if (jsonObject != null) {
 				if (jsonObject?.meta?.status == 201) {
-					delete actions["reblog"];
-					actions["unreblog"] = actionValue;
-					item.actions = actions;
+					item.removeAction("reblog");
+					item.addAction("unreblog");
 					actionComplete(item, null);
 				}
 				else {
@@ -66,9 +62,9 @@ async function performAction(actionId, actionValue, item) {
 			actionComplete(null, null);
  		}
  		else if (actionId == "notes" || actionId == "trail") {
-			const postUrl = `${site}/v2/blog/${actionValues["blog_name"]}/posts/${actionValues["id"]}`;
-			const notesUrl = `${site}/v2/blog/${actionValues["blog_name"]}/notes?id=${actionValues["id"]}&mode=all`;
-			const originalPostUrl = `${site}/v2/blog/${actionValues["original_blog_name"]}/posts/${actionValues["original_id"]}`;
+			const postUrl = `${site}/v2/blog/${metadata.blog_name}/posts/${metadata.id}`;
+			const notesUrl = `${site}/v2/blog/${metadata.blog_name}/notes?id=${metadata.id}&mode=all`;
+			const originalPostUrl = `${site}/v2/blog/${metadata.original_blog_name}/posts/${metadata.original_id}`;
 
 			const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
 
@@ -508,31 +504,27 @@ function postForItem(item) {
 		post.annotations = [annotation];
 	}
 	
-	let actionValues = { id: item.id_string, reblog_key: item.reblog_key };
+	post.metadata = {
+		id: item.id_string,
+		reblog_key: item.reblog_key,
+		blog_name: item.blog_name,
+		original_id: originalId,
+		original_blog_name: originalBlogName
+	};
 
-	let actions = {};
-    if (item.community == null) { // community posts can't be liked or reblogged
+	if (item.community == null) { // community posts can't be liked or reblogged
 		if (!isReblogged) {
-			actions["reblog"] = JSON.stringify(actionValues);
+			post.addAction("reblog");
 		}
-		if (isLiked) {
-			actions["unlike"] = JSON.stringify(actionValues);
-		}
-		else {
-			actions["like"] = JSON.stringify(actionValues);
-		}
+		post.addAction(isLiked ? "unlike" : "like");
 	}
 	// item.note_count is available, but doesn't reflect what the API will return
-	{
-		let noteActionValues = { id: item.id_string, blog_name: item.blog_name, original_id: originalId, original_blog_name: originalBlogName };
-		if (isReblog && item.trail != null && item.trail.length > 1) {
-			actions["trail"] = JSON.stringify(noteActionValues);
-		}
-		else {
-			actions["notes"] = JSON.stringify(noteActionValues);
-		}
+	if (isReblog && item.trail != null && item.trail.length > 1) {
+		post.addAction("trail");
 	}
-	post.actions = actions;
+	else {
+		post.addAction("notes");
+	}
 
 	return post;
 }

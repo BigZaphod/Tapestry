@@ -54,28 +54,26 @@ async function load() {
 	}
 }
 
-async function performAction(actionId, actionValue, item) {
-	let actions = item.actions;
-	
-	try {	
+async function performAction(actionId, item) {
+	const id = item.metadata.id;
+
+	try {
 		if (actionId == "bookmark") {
-			const text = await sendRequest(`${site}/posts/favorites`, "POST", `id=${actionValue}`)
-	
-			delete actions["bookmark"];
-			actions["unbookmark"] = actionValue;
-			item.actions = actions;
+			const text = await sendRequest(`${site}/posts/favorites`, "POST", `id=${id}`)
+
+			item.removeAction("bookmark");
+			item.addAction("unbookmark");
 			actionComplete(item, null);
 		}
 		else if (actionId == "unbookmark") {
-			const text = await sendRequest(`${site}/posts/favorites/${actionValue}`, "DELETE")
+			const text = await sendRequest(`${site}/posts/favorites/${id}`, "DELETE")
 
-			delete actions["unbookmark"];
-			actions["bookmark"] = actionValue;
-			item.actions = actions;
+			item.removeAction("unbookmark");
+			item.addAction("bookmark");
 			actionComplete(item, null);
 		}
 		else if (actionId == "replies" || actionId == "thread") {
-			const response = await sendRequest(`${site}/posts/conversation?id=${actionValue}`)
+			const response = await sendRequest(`${site}/posts/conversation?id=${id}`)
 			const json = JSON.parse(response);
 			
 			let results = [];
@@ -103,22 +101,7 @@ function postForItem(item, filterMentions) {
 		}
 	}
 	
-	let actions = {};
-	let actionValue = item.id;
-	if (item["_microblog"].is_bookmark) {
-		actions["unbookmark"] = actionValue;
-	}
-	else {
-		actions["bookmark"] = actionValue;
-	}
-	if (item["_microblog"].is_conversation) {
-		actions["replies"] = actionValue;
-	}
-	else {
-		actions["thread"] = actionValue;
-	}
-
-	const author = item.author; 
+	const author = item.author;
 	const identity = Identity.createWithName(author.name);
 	identity.uri = author.url;
 	identity.avatar = author.avatar;
@@ -130,7 +113,9 @@ function postForItem(item, filterMentions) {
 	const post = Item.createWithUriDate(url, date);
 	post.body = content;
 	post.author = identity;
-	post.actions = actions;
+	post.metadata = { id: item.id };
+	post.addAction(item["_microblog"].is_bookmark ? "unbookmark" : "bookmark");
+	post.addAction(item["_microblog"].is_conversation ? "replies" : "thread");
 	
 	return post;
 }

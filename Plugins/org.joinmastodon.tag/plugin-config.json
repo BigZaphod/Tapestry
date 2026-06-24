@@ -13,6 +13,6 @@
 	"verify_variables": true,
 	"provides_attachments": true,
     "hidden_tag_classes": ["quote-inline"],
-    "minimum_app_version": "1.6",
-	"version": 17
+    "minimum_app_version": "2.0",
+	"version": 18
 }

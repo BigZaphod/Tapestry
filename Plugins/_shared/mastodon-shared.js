@@ -142,38 +142,14 @@ function postForItem(item) {
 
 	post.shortcodes = shortcodes;
 
-	let actions = {};
+	post.metadata = { id: item.id };
 
-	//actions["reply"] = item.id;
+	//post.addAction("reply");
 
-	if (item?.favourited) {
-		actions["unfavorite"] = item.id;
-	}
-	else {
-		actions["favorite"] = item.id;
-	}
-
-	if (item?.reblogged) {
-		actions["unboost"] = item.id;
-	}
-	else {
-		actions["boost"] = item.id;
-	}
-
-	if (item?.bookmarked) {
-		actions["unbookmark"] = item.id;
-	}
-	else {
-		actions["bookmark"] = item.id;
-	}
-
-	if (item?.replies_count > 0) {
-		actions["replies"] = item.id;
-	} else {
-		actions["thread"] = item.id;
-	}
-
-	post.actions = actions;
+	post.addAction(item?.favourited ? "unfavorite" : "favorite");
+	post.addAction(item?.reblogged ? "unboost" : "boost");
+	post.addAction(item?.bookmarked ? "unbookmark" : "bookmark");
+	post.addAction(item?.replies_count > 0 ? "replies" : "thread");
 
 	let attachments = [];
 
@@ -292,55 +268,49 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, actionValue, item) {
-	let actions = item.actions;
-	
+async function performAction(actionId, item) {
+	const id = item.metadata.id;
+
 	if (actionId == "favorite") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/favourite`, "POST");
-		delete actions["favorite"];
-		actions["unfavorite"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
+		item.removeAction("favorite");
+		item.addAction("unfavorite");
 		actionComplete(item);
 	}
 	else if (actionId == "unfavorite") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/unfavourite`, "POST");
-		delete actions["unfavorite"];
-		actions["favorite"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/unfavourite`, "POST");
+		item.removeAction("unfavorite");
+		item.addAction("favorite");
 		actionComplete(item);
 	}
 	else if (actionId == "boost") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/reblog`, "POST");
-		delete actions["boost"];
-		actions["unboost"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/reblog`, "POST");
+		item.removeAction("boost");
+		item.addAction("unboost");
 		item.annotations = [Annotation.createWithText("Boosted by you")];
 		actionComplete(item);
 	}
 	else if (actionId == "unboost") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/unreblog`, "POST");
-		delete actions["unboost"];
-		actions["boost"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/unreblog`, "POST");
+		item.removeAction("unboost");
+		item.addAction("boost");
 		item.annotations = [];
 		actionComplete(item);
 	}
 	else if (actionId == "bookmark") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/bookmark`, "POST");
-		delete actions["bookmark"];
-		actions["unbookmark"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/bookmark`, "POST");
+		item.removeAction("bookmark");
+		item.addAction("unbookmark");
 		actionComplete(item);
 	}
 	else if (actionId == "unbookmark") {
-		await sendRequest(`${site}/api/v1/statuses/${actionValue}/unbookmark`, "POST");
-		delete actions["unbookmark"];
-		actions["bookmark"] = actionValue;
-		item.actions = actions;
+		await sendRequest(`${site}/api/v1/statuses/${id}/unbookmark`, "POST");
+		item.removeAction("unbookmark");
+		item.addAction("bookmark");
 		actionComplete(item);
 	}
 	else if (actionId == "thread" || actionId == "replies") {
-		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${actionValue}/context`));
+		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}/context`));
 		let results = [];
 		for (const item of context["ancestors"]) {
 			results.push(postForItem(item));
