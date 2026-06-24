@@ -109,6 +109,10 @@ Adds a content warning to the item and blurs any attachments.
 
 The creator of the content. See `Identity` below.
 
+#### annotations: Array of Annotation
+
+Extra context to display alongside the item, such as a "Boosted by" note. See `Annotation` below.
+
 #### attachments: Array of MediaAttachment and LinkAttachment and Item and PollAttachment
 
 Media, link, poll, and quoted item attachments for the content. See `MediaAttachment`, `LinkAttachment`, and `PollAttachment` below.
@@ -129,6 +133,16 @@ item.shortcodes = { "ONE": "https://example.com/one.jpg", "CHOCK": "https://choc
 ```
 
 Shortcode tokens must not contain spaces or additional colons: using `:my fancy code:` or `:what:the:hell:` is invalid and will be ignored. 
+
+#### actions: Dictionary
+
+The set of actions available for the item. On 2.0+, manage it with `item.addAction()` / `item.removeAction()` rather than setting it directly, and store any data the actions need in `metadata`. See the `actions.json` section.
+
+#### metadata: Dictionary
+
+A per-item bag of `String` key/value pairs for the connector's own use — most commonly the identifiers an action needs when it's performed, then read back from `item.metadata` in `performAction`. See the `actions.json` section.
+
+> **Compatibility:** `metadata` requires `minimum_app_version="2.0"`.
 
 ---
 ### Identity
@@ -362,25 +376,27 @@ If `votes` is left unspecified on one or more options in a `PollAttachment`, Tap
 
 The Tapestry app will call the following functions in `plugin.js` when it needs the script to read or write data. If no implementation is provided, no action will be performed. For example, some sources will not need to `verify()` themselves.
 
-All actions are performed asynchronously (using one or more JavaScript Promise objects). An action indicates that it has completed using the `processResults`, `processError`, and `processVerification` functions specified below.
+These functions are asynchronous (they may be declared `async` and/or return a Promise). `load()`, `performAction()`, and `verify()` report their results by returning a value, and report a failure by throwing an `Error`.
 
 ---
 ### verify()
 
-Determines if a site is reachable and gathers properties for the feed. After `processVerification` is called a feed can be saved by a user.
+Determines if a site is reachable and gathers properties for the feed. Once verification succeeds a feed can be saved by a user.
 
 This function will only be called if `needs_verification` is set to true in the connectors’s configuration.
 
 The properties returned can be user visible or used internally. An example of the former case is a display name will be used identify the feed. The latter case is a base URL that will be used to handle relative paths in the feed.
 
-To return the results of verification, you must call `processVerification()`.
+Return the verification result — an object with the properties below, or a `String` to use as the display name. Throw an `Error` if the site can't be verified.
 
-When you call `processVerification()` you can supply an object with these properties (all are optional):
+The returned object can contain these properties (all are optional):
 
   * displayName: `String` with a suggested name for a feed (e.g. an account name, blog name, etc.).
   * icon: `String` with a URL to an image that can be used as a graphic attached to the feed (e.g. an avatar).
   * baseUrl: `String` with a URL prefix for relative paths.
   * accountIdentity: `Identity` object that represents the logged in account for the feed.
+
+> **Note:** A `baseUrl` is typically used for feeds where the site is "feed.example.com" but images and other resources are loaded from "example.com".
 
 For authenticated feeds (such as social media accounts), we suggest supplying an `accountIdentity` object (created with `Identity.create()`) that is configured with the user's display name, username, and avatar.
 
@@ -388,10 +404,16 @@ When a Tapestry user adds multiple feeds for the same connector that requires au
 
 If `icon` or `displayName` are omitted, then the ones supplied by `accountIdentity` will be used instead, if possible.
 
+> **Compatibility:** Before 2.0, the result was reported by calling `processVerification()` (and failures via `processError()`) rather than returned/thrown.
+
 ---
 ### load()
 
-Your script should implement this function to load any new data and return it to the app with `processResults` or `processError`. Variables can be used to determine what to load. For example, whether to include mentions on Mastodon or not.
+Implement this function to load new data and return it as an `Array` of `Item` objects. Throw an `Error` to report a failure. Variables can be used to determine what to load — for example, whether to include mentions on Mastodon or not.
+
+Optionally, you can deliver items incrementally — for example, from several separate requests — by calling `processResults()` as each batch arrives; returning from `load()` always ends the load.
+
+> **Compatibility:** Before 2.0, `load()` returned nothing — results were always delivered with `processResults()` and the load ended when its `isComplete` flag was true, and errors were reported with `processError()`.
 
 ---
 ### performAction(actionId, item)
@@ -401,13 +423,13 @@ Tapestry calls this function when an action needs to be performed by the connect
   * actionId: A `String` with the action id
   * item: the `Item` instance that the action is being requested for.
 
-Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as-needed. After performing the action, call `actionComplete()` with the results.
+Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure.
 
 > **Note:** Only one action per feed is allowed to be running at a time.
 
-> **Compatibility:** Connectors with a `minimum_app_version` below 2.0 instead receive `performAction(actionId, actionValue, item)`, where `actionValue` is the string that was assigned to the action. As of 2.0, `actionValue` is no longer used and thus omitted. See `actions.json`.
+> **Compatibility:** Before 2.0, `performAction(actionId, actionValue, item)` also received the action's stored `actionValue`, and the result was reported by calling `actionComplete()` rather than returned. As of 2.0, `actionValue` is omitted and the result is returned (or an `Error` thrown). See `actions.json`.
 
-See section on `actions.json` and `actionComplete()` for more information on how to define and perform actions.
+See the section on `actions.json` for more information on how to define and perform actions.
 
 ---
 ## Utility Functions
@@ -478,23 +500,17 @@ The `fullResponse` flag can be set to `true`. In this mode, the text response is
 A Mastodon user’s identity is determined by sending a request to verify credentials:
 
 ```javascript
-function verify() {
-	sendRequest(site + "/api/v1/accounts/verify_credentials")
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
-		
-		const displayName = "@" + jsonObject["username"];
-		const icon = jsonObject["avatar"];
-		
-		const verification = {
-			displayName: displayName,
-			icon: icon
-		}
-		processVerification(verification);
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+async function verify() {
+	const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
+	const jsonObject = JSON.parse(text);
+
+	const displayName = "@" + jsonObject["username"];
+	const icon = jsonObject["avatar"];
+
+	return {
+		displayName: displayName,
+		icon: icon
+	};
 }
 ```
 
@@ -516,39 +532,30 @@ For feed-like data sources (such as RSS), this often results in a very significa
 > **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
 
 ---
-### processResults(results, isComplete)
+### processResults(results)
 
-Sends any data that’s retrieved to the Tapestry app for display.
+Delivers a batch of retrieved items to the Tapestry app. Call this from `load()` to deliver items incrementally as they arrive (for example, from several separate requests). The load ends when `load()` returns. See the [Mastodon connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.joinmastodon/plugin.js) for an example.
 
   * results: `Array` with `Item` objects.
-  * isComplete: `Boolean` with a flag that indicates that result collection is complete and can be displayed in the app timeline (default is true).
 
-After returning a true value for `isComplete` any further results will be ignored. If you have multiple async `sendRequest` in your connector, you'll need to have some kind of reference counter to know when to set the flag to true. See the [Mastodon connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.joinmastodon/plugin.js) for an example of how to do this.
+> **Compatibility:** Before 2.0, `processResults(results, isComplete)` took a second `Boolean` argument (default true) that ended the load when true — connectors making several requests needed a reference counter to know when to set it. On 2.0+, completion is signaled by `load()` returning and the `isComplete` argument is ignored.
 
 ---
-### processError(error)
+### processError(error) [deprecated]
 
-Sends any error to the Tapestry app for display
+> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, throw an `Error` from `load()`, `performAction()`, or `verify()` instead — it reports the failure the same way.
+
+Sends an error to the Tapestry app for display.
 
   * error: `Error` which indicates what went wrong. Will be displayed in the user interface.
 
 ---
-### processVerification(verification)
+### processVerification(verification) [deprecated]
 
-Sets the parameters for the site and service.
+> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `verify()` returns the verification result (or throws) — see `verify()`.
 
-  * verification: dictionary `Object` or `String`.
+Reports the result of verification. The `verification` value — a result `Object` or a `String` display name — takes the same form documented under `verify()`.
 
-The dictionary can contain the following:
-
-  * displayName: `String` that will be used to name the feed. For example, a RSS feed name or a Mastodon account.
-  * icon: `String` for an image URL that will be presented alongside the display name.
-  * baseUrl: `String` that will be used to resolve relative URLs. Anything other than the protocol and hostname will be discarded.
-  
-When a string is returned, it will be used as a `displayName` with an empty `baseUrl` and default `icon`.
-
-> **Note:** A `baseUrl` is typically used for feeds where the site is "feed.example.com" but images and other resources are loaded from "example.com".
-  
 ---
 ### xmlParse(text) → (Object | Promise)
 
@@ -739,16 +746,16 @@ Returns a `String` that was saved in local storage. If no value was stored, `nul
 All items in local storage are removed.
 
 ---
-### actionComplete(results, error)
+### actionComplete(results, error) [deprecated]
+
+> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `performAction()` returns its result (an `Item`, an `Array` of `Item`s, or nothing) and throws an `Error` to report a failure — see `performAction()`.
 
 Indicates that the action has been performed. Must be called.
 
   * results: An `Item` or Array of `Item`s that were updated. A null value indicates there were no results.
   * error: If not null, the `Error` indicates what went wrong and will be displayed in the user interface.
 
-See section on `actions.json` for more information on how to complete actions.
-
-> **Compatibility:** Returning an array of `Item`s requires `minimum_app_version="1.4"` or higher.
+See section on `actions.json` for more information on how to complete actions. (Returning an array of `Item`s requires `minimum_app_version="1.4"` or higher.)
 
 ---
 ### require(resourceName) → Value | Object | String | false
@@ -1008,43 +1015,38 @@ A JavaScript file that implements the Actions specified above using the Function
 The following `plugin.js` script is used in a connector that retrieves all recent earthquakes from the U.S. Geological Survey (USGS). This is all that's needed to create posts for the universal timeline:
 
 ```javascript
-function load() {
+async function load() {
 
 	let summaryName = "4.5_day";
 	
 	const endpoint = `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/${summaryName}.geojson`;
 
-	sendRequest(endpoint)
-	.then((text) => {
-		const jsonObject = JSON.parse(text);
+	const responseText = await sendRequest(endpoint);
+	const jsonObject = JSON.parse(responseText);
 
-		const features = jsonObject["features"];
-		
-		let results = [];
-		for (const feature of features) {
-			const properties = feature["properties"];
-			const url = properties["url"];
-			const date = new Date(properties["time"]);
-			const text = properties["title"];
-			
-			const geometry = feature["geometry"];
-			const coordinates = geometry["coordinates"];
-			const latitude = coordinates[1];
-			const longitude = coordinates[0];
-			const mapsUrl = "https://maps.apple.com/?ll=" + latitude + "," + longitude + "&z=8";
-			
-			const content = "<p>" + text + " <a href=\"" + mapsUrl + "\">Open Map</a></p>"
-			
-			let resultItem = Item.createWithUriDate(url, date);
-			resultItem.body = content;
-			
-			results.push(resultItem);
-		}
-		processResults(results);
-	})
-	.catch((requestError) => {
-		processError(requestError);
-	});
+	const features = jsonObject["features"];
+
+	let results = [];
+	for (const feature of features) {
+		const properties = feature["properties"];
+		const url = properties["url"];
+		const date = new Date(properties["time"]);
+		const text = properties["title"];
+
+		const geometry = feature["geometry"];
+		const coordinates = geometry["coordinates"];
+		const latitude = coordinates[1];
+		const longitude = coordinates[0];
+		const mapsUrl = "https://maps.apple.com/?ll=" + latitude + "," + longitude + "&z=8";
+
+		const content = "<p>" + text + " <a href=\"" + mapsUrl + "\">Open Map</a></p>"
+
+		let resultItem = Item.createWithUriDate(url, date);
+		resultItem.body = content;
+
+		results.push(resultItem);
+	}
+	return results;
 }
 ```
 
@@ -1620,7 +1622,7 @@ Actions are displayed or preferred in the order they are defined in the `actions
 }
 ```
 
-When returning an `Item` in `processResults()`, use `item.addAction()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
+When returning an `Item` from `load()`, use `item.addAction()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
 
 For example, an action that marks an item as a favorite might need an identifier when processing the action in `performAction`:
 
@@ -1641,13 +1643,13 @@ When an item has one or more actions, a menu or one or more action buttons will 
 
 It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or name so the user can tell that the state has changed. Use `item.removeAction()` and `item.addAction()` within your `performAction` implementation to do this.
 
-The modified item is returned to Tapestry using `actionComplete`. If the action cannot be performed, an `Error` should be returned and will be displayed to the user.
+The modified item is returned to Tapestry by returning it from `performAction`. If the action cannot be performed, throw an `Error` and it will be displayed to the user.
 
 This example performs "favorite" and "unfavorite" on an item. Note that any part of the item can be modified: the body in this example, but it could be annotations or attachments as well. The example also shows how data is read from `item.metadata` and how the state of the item is managed:
 
 ```javascript
 
-function performAction(actionId, item) {
+async function performAction(actionId, item) {
 	console.log(`actionId = ${actionId}`);
 	if (actionId == "favorite") {
 		let id = item.metadata.id;
@@ -1656,10 +1658,10 @@ function performAction(actionId, item) {
 		let content = item.body;
 		content += "<p>Faved!</p>";
 		item.body = content;
-		
+
 		item.removeAction("favorite");
 		item.addAction("unfavorite");
-		actionComplete(item, null);
+		return item;
 	}
 	else if (actionId == "unfavorite") {
 		let id = item.metadata.id;
@@ -1671,11 +1673,10 @@ function performAction(actionId, item) {
 
 		item.removeAction("unfavorite");
 		item.addAction("favorite");
-		actionComplete(item, null);
+		return item;
 	}
 	else if (actionId == "whoops") {
-		let error = new Error("That wasn't supposed to happen!")
-		actionComplete(null, error);
+		throw new Error("That wasn't supposed to happen!");
 	}
 }
 ```
@@ -1690,7 +1691,7 @@ By default, actions have a `null` role which means they don't get any special tr
 
 **`"context"`**
 
-A context action is expected to return additional context about the item such as a conversation thread. To display a conversation thread, for example, call `actionComplete()` with an array of `Item`s. The display order is preserved (Tapestry will not re-sort these items by date). It is your responsibility to return the original item in the resulting array in the position you want it to be displayed otherwise it will not be included in the resulting timeline view. Context actions appear in the swipe menu for items in the timeline and also replace the default "Details" button. (Added in Tapestry 1.4.)
+A context action is expected to return additional context about the item such as a conversation thread. To display a conversation thread, for example, return an array of `Item`s from `performAction()`. The display order is preserved (Tapestry will not re-sort these items by date). It is your responsibility to return the original item in the resulting array in the position you want it to be displayed otherwise it will not be included in the resulting timeline view. Context actions appear in the swipe menu for items in the timeline and also replace the default "Details" button. (Added in Tapestry 1.4.)
 
 #### Built-in Symbols
 
