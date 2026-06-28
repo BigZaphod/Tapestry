@@ -45,46 +45,54 @@ async function load() {
 		endDate = new Date(parseInt(endDateTimestamp));
 	}
 
+	// The three sections are independent of each other, so run them concurrently. The bridge
+	// allows multiple in-flight requests per load, and each section delivers its items via
+	// processResults() as soon as it finishes. load() returns once all selected sections are done.
+	// (Within a section, work that has ordering dependencies — followed tags before the home query,
+	// the userId lookup before statuses, and home pagination — stays sequential.)
+	const tasks = [];
+
 	if (includeHome == "on") {
-		console.log(`==== HOME START`);
-		const followedTagNames = await fetchFollowedTags();
-		const parameters = await queryHomeTimeline(endDate, followedTagNames);
-  		const results = parameters[0];
-  		const newestItemDate = parameters[1];
-		processResults(results);
-		if (newestItemDate) {
-			setItem("endDateTimestamp", String(newestItemDate.getTime()));
-		}
-		console.log(`==== HOME END`);
+		tasks.push((async () => {
+			console.log(`==== HOME START`);
+			const followedTagNames = await fetchFollowedTags();
+			const parameters = await queryHomeTimeline(endDate, followedTagNames);
+			const results = parameters[0];
+			const newestItemDate = parameters[1];
+			processResults(results);
+			if (newestItemDate) {
+				setItem("endDateTimestamp", String(newestItemDate.getTime()));
+			}
+			console.log(`==== HOME END`);
+		})());
 	}
 
 	if (includeMentions == "on") {
-		console.log(`==== MENTIONS START`);
-		const results = await queryMentions();
-		console.log(`==== MENTIONS END results = ${results.length}`);
-		processResults(results);
+		tasks.push((async () => {
+			console.log(`==== MENTIONS START`);
+			const results = await queryMentions();
+			console.log(`==== MENTIONS END results = ${results.length}`);
+			processResults(results);
+		})());
 	}
 
 	if (includeStatuses == "on") {
-		console.log(`==== STATUSES START`);
-		if (userId != null) {
+		tasks.push((async () => {
+			console.log(`==== STATUSES START`);
+			if (userId == null) {
+				const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
+				const jsonObject = JSON.parse(text);
+				userId = jsonObject["id"];
+				setItem("userId", userId);
+			}
 			const results = await queryStatusesForUser(userId);
 			console.log(`==== STATUSES END results = ${results.length}`);
 			processResults(results);
-		}
-		else {
-			const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
-			const jsonObject = JSON.parse(text);
-
-			userId = jsonObject["id"];
-			setItem("userId", userId);
-
-			const results = await queryStatusesForUser(userId);
-			console.log(`==== STATUSES END results = ${results.length}`);
-			processResults(results);
-		}
-		console.log(`==== STATUSES DONE`);
+			console.log(`==== STATUSES DONE`);
+		})());
 	}
+
+	await Promise.all(tasks);
 
 	// All done — returning from load() ends the load (items were delivered incrementally above).
 	console.log(`==== LOAD COMPLETE`);

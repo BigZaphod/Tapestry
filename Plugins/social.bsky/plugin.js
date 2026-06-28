@@ -36,20 +36,33 @@ async function load() {
 		setItem("didSelf", didSelf);
 	}
 
+	// The timeline and mentions sections are independent of each other, so run them concurrently.
+	// The bridge allows multiple in-flight requests per load, and each section delivers its items via
+	// processResults() as soon as it finishes. load() returns once all selected sections are done.
+	// (The session DID lookup above is a shared prerequisite, and the timeline's internal pagination
+	// chains on a cursor — both stay sequential.)
+	const tasks = [];
+
 	if (includeHome == "on") {
-		const parameters = await queryTimeline(endDate);
-		const results = parameters[0];
-		const newestItemDate = parameters[1];
-		processResults(results);
-		if (newestItemDate != null) {
-			setItem("endDateTimestamp", String(newestItemDate.getTime()));
-		}
+		tasks.push((async () => {
+			const parameters = await queryTimeline(endDate);
+			const results = parameters[0];
+			const newestItemDate = parameters[1];
+			processResults(results);
+			if (newestItemDate != null) {
+				setItem("endDateTimestamp", String(newestItemDate.getTime()));
+			}
+		})());
 	}
-	
+
 	if (includeMentions == "on" || includeReplies == "on") {
-		const results = await queryMentions();
-		processResults(results);
+		tasks.push((async () => {
+			const results = await queryMentions();
+			processResults(results);
+		})());
 	}
+
+	await Promise.all(tasks);
 
 	// All done — returning from load() ends the load (items were delivered incrementally above).
 }
