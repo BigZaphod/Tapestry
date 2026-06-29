@@ -45,7 +45,10 @@ async function load() {
 }
 
 async function performAction(actionId, item) {
-	const id = item.metadata.id;
+	// 2.0 stores the post id in item.metadata; older items stored it as the
+	// action's value. Fall back for those. Removable a few months after 2.0
+	// ships publicly, once pre-2.0 items have expired out of catalogs.
+	const id = item.metadata?.id ?? item.actions?.[actionId];
 
 	if (actionId == "bookmark") {
 		const text = await sendRequest(`${site}/posts/favorites`, "POST", `id=${id}`)

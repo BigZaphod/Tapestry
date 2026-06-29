@@ -582,8 +582,22 @@ function bytesToString(bytes) {
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
 async function performAction(actionId, item) {
-	const metadata = item.metadata;
-	
+	// 2.0 stores the post's uri/cid/rkey in item.metadata; older items stored
+	// them as a JSON string under the action's value. Fall back for those.
+	// Removable a few months after 2.0 ships publicly, once pre-2.0 items have
+	// expired out of catalogs.
+	let metadata = item.metadata;
+	if (metadata == null) {
+		const legacy = item.actions?.[actionId];
+		if (legacy != null) {
+			const values = JSON.parse(legacy);
+			metadata = { uri: values.uri, cid: values.cid };
+			// The old unlike/unrepost actions carried the record's rkey directly.
+			if (actionId == "unlike") { metadata.likeRkey = values.rkey; }
+			else if (actionId == "unrepost") { metadata.repostRkey = values.rkey; }
+		}
+	}
+
 	let did = getItem("did");
 	if (did == null) {
 		did = await getSessionDid();

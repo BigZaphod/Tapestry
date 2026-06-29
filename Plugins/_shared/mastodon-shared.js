@@ -269,7 +269,10 @@ function postForItem(item) {
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
 async function performAction(actionId, item) {
-	const id = item.metadata.id;
+	// 2.0 stores the status id in item.metadata; older items stored it as the
+	// action's value. Fall back for those. Removable a few months after 2.0
+	// ships publicly, once pre-2.0 items have expired out of catalogs.
+	const id = item.metadata?.id ?? item.actions?.[actionId];
 
 	if (actionId == "favorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
