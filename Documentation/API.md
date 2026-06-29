@@ -26,6 +26,7 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Removed** (when targeting 2.0) — `processError()`, `processVerification()`, and `actionComplete()` are no longer provided. Throw an `Error` instead.
   * **Added** — [`item.metadata`](#metadata-dictionary), a per-item `[String: String]` bag for data an action needs.
   * **Added** — [`item.addAction()` / `item.removeAction()`](#actionsjson) for managing an item's actions, replacing the old per-action value strings (`item.actions = { id: "value" }`).
+  * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
 
 Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
 
@@ -1764,6 +1765,22 @@ By default, actions have a `null` role which means they don't get any special tr
 **`"context"`**
 
 A context action is expected to return additional context about the item such as a conversation thread. To display a conversation thread, for example, return an array of `Item`s from `performAction()`. The display order is preserved (Tapestry will not re-sort these items by date). It is your responsibility to return the original item in the resulting array in the position you want it to be displayed otherwise it will not be included in the resulting timeline view. Context actions appear in the swipe menu for items in the timeline and also replace the default "Details" button. (Added in Tapestry 1.4.)
+
+#### Action Presentation
+
+Three optional attributes control where and how an action is presented. They are independent of `role`. (All added in Tapestry 2.0.)
+
+**`priority`**
+
+Either `"primary"` (the default) or `"secondary"`. Primary actions are buttons directly on the item; secondary actions go in the item's overflow (`…`) menu. If there isn't room for every primary action, the extras move to the overflow menu in their defined order.
+
+**`group`**
+
+A name that clusters related actions into a single button that opens a small menu — for example a "boost" and a "quote" under one affordance. The group is represented by the icon of its first applicable action. Grouping only applies to the buttons on the item; in the overflow menu actions are always listed individually. All actions sharing a `group` should have the same `priority`.
+
+**`destructive`**
+
+When `true`, the action is styled to read as destructive and asks the user to confirm before performing — use it for actions like deleting a post. A destructive action defaults to the overflow menu (as if `priority` were `"secondary"`) unless you set `priority` yourself.
 
 #### Built-in Symbols
 
