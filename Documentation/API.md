@@ -27,6 +27,7 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Added** — [`item.metadata`](#metadata-dictionary), a per-item `[String: String]` bag for data an action needs.
   * **Added** — [`item.addAction()` / `item.removeAction()`](#actionsjson) for managing an item's actions, replacing the old per-action value strings (`item.actions = { id: "value" }`).
   * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
+  * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
 
 Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
 
@@ -179,6 +180,31 @@ The set of actions available for the item. On 2.0+, manage it with `item.addActi
 A per-item bag of `String` key/value pairs for the connector's own use — most commonly the identifiers an action needs when it's performed, then read back from `item.metadata` in `performAction`. See the `actions.json` section.
 
 > **Compatibility:** `metadata` requires `minimum_app_version="2.0"`.
+
+#### Removing an Item
+
+A connector can report that an item no longer exists, so that Tapestry removes it from the timeline (and from any open conversation thread). Instead of an `Item`, return a *removal*, created with `Item.delete()`:
+
+```javascript
+const removal = Item.delete(uri);
+```
+
+The `uri` is the same value the item was created with — that's all Tapestry needs to identify it. A removal can go anywhere an `Item` can, mixed freely into the `Array` returned from `load()` or `performAction()`. For example, a "delete post" action removes the post on the service and then returns a removal for it:
+
+```javascript
+async function performAction(actionId, item) {
+	if (actionId == "delete") {
+		await sendRequest(`${site}/api/v1/statuses/${item.metadata.id}`, "DELETE");
+		return [Item.delete(item.uri)];
+	}
+}
+```
+
+A removal returned from `load()` lets a connector that can discover deleted content reconcile those removals as the timeline refreshes.
+
+You may optionally pass the time the removal happened as a second argument — `Item.delete(uri, date)`. If omitted, the current time is used. When an item and a removal for the same `uri` are seen together, the newer-dated one wins, so a removal dated earlier than a fresh version of the item is ignored (and a removal you date in the past won't undo a more recent update).
+
+> **Compatibility:** Removals require `minimum_app_version="2.0"` and are ignored by older versions.
 
 ---
 ### Identity
@@ -453,6 +479,8 @@ Implement this function to load new data and return it as an `Array` of `Item` o
 
 Optionally, you can deliver items incrementally — for example, from several separate requests — by calling `processResults()` as each batch arrives; returning from `load()` always ends the load.
 
+The array may also include *removals* if the connector can discover that content has been deleted — see [Removing an Item](#removing-an-item).
+
 > **Compatibility:** Before 2.0, `load()` returned nothing — results were always delivered with `processResults()` and the load ended when its `isComplete` flag was true, and errors were reported with `processError()`.
 
 ---
@@ -465,7 +493,7 @@ Tapestry calls this function when an action needs to be performed by the connect
   * actionId: A `String` with the action id
   * item: the `Item` instance that the action is being requested for.
 
-Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure.
+Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
 
 > **Note:** Only one action per feed is allowed to be running at a time.
 
@@ -593,7 +621,7 @@ Returns a `Promise` with a resolve handler that includes a `String` parameter wi
 
 Delivers a batch of retrieved items to the Tapestry app. Call this from `load()` to deliver items incrementally as they arrive (for example, from several separate requests). The load ends when `load()` returns. See the [Mastodon connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.joinmastodon/plugin.js) for an example.
 
-  * results: `Array` with `Item` objects.
+  * results: `Array` with `Item` objects. The array may also include *removals* — see [Removing an Item](#removing-an-item).
 
 > **Compatibility:** Before 2.0, `processResults(results, isComplete)` took a second `Boolean` argument (default true) that ended the load when true — connectors making several requests needed a reference counter to know when to set it. On 2.0+, completion is signaled by `load()` returning and the `isComplete` argument is ignored.
 
