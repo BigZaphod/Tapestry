@@ -151,6 +151,13 @@ function postForItem(item) {
 	post.addAction(item?.bookmarked ? "unbookmark" : "bookmark");
 	post.addAction(item?.replies_count > 0 ? "replies" : "thread");
 
+	// Only your own posts can be deleted. `account` is the post's author (a boost was already unwrapped to the
+	// original post above), and "userId" is the authenticated account stored during verify/load.
+	const myUserId = getItem("userId");
+	if (myUserId != null && account?.id == myUserId) {
+		post.addAction("delete");
+	}
+
 	let attachments = [];
 
     const mediaAttachments = item["media_attachments"];
@@ -323,6 +330,10 @@ async function performAction(actionId, item) {
 			results.push(postForItem(item));
 		}
 		return results;
+	}
+	else if (actionId == "delete") {
+		await sendRequest(`${site}/api/v1/statuses/${id}`, "DELETE");
+		return [Item.delete(item.uri)];
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

@@ -37,6 +37,12 @@
 			"icon": "tapestry.bookmark.fill"
 		},
 		{
+			"id": "delete",
+			"name": "Delete Post",
+			"icon": "trash",
+			"destructive": true
+		},
+		{
 			"id": "thread",
 			"name": "Thread",
 			"icon": "bubble.left.and.bubble.right",

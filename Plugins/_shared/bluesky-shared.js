@@ -95,6 +95,11 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         if (item.post.viewer?.bookmarked != null) {
             actions.push(item.post.viewer?.bookmarked == false ? "save" : "unsave");
         }
+        // Only your own posts can be deleted. "didSelf" is the authenticated account's DID, stored at login.
+        const didSelf = getItem("didSelf");
+        if (didSelf != null && author.did == didSelf) {
+            actions.push("delete");
+        }
     }
     actions.push(item.post?.replyCount > 0 ? "replies" : "thread");
 
@@ -748,6 +753,20 @@ async function performAction(actionId, item) {
 			results.push(postForItem(reply, true));
 		}
 		return results;
+	}
+	else if (actionId == "delete") {
+		// The post's rkey is the last path component of its at:// uri; the repo is your own DID (you can only
+		// delete your own posts).
+		const body = {
+			collection: "app.bsky.feed.post",
+			repo: did,
+			rkey: metadata.uri.split("/").pop()
+		};
+		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
+		const parameters = JSON.stringify(body);
+		const extraHeaders = { "content-type": "application/json" };
+		await sendRequest(url, "POST", parameters, extraHeaders);
+		return [Item.delete(item.uri)];
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);
