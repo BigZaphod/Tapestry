@@ -76,8 +76,19 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     let content = contentForRecord(item.post.record);
         
     let metadata = { uri: item.post.uri, cid: item.post.cid };
+    // Capture the thread root so a reply can set both `parent` (this post) and `root`. A top-level post is its own
+    // root; a reply's root comes from the feed item's reply ref (fall back to this post if it's missing/blocked).
+    const replyRoot = item.reply?.root;
+    if (replyRoot?.uri != null && replyRoot?.cid != null) {
+        metadata.rootUri = replyRoot.uri;
+        metadata.rootCid = replyRoot.cid;
+    } else {
+        metadata.rootUri = item.post.uri;
+        metadata.rootCid = item.post.cid;
+    }
     let actions = [];
     if (includeActions) {
+        actions.push("reply");
         if (item.post.viewer?.like != null) {
             metadata.likeRkey = item.post.viewer.like.split("/").pop();
             actions.push("unlike");
@@ -98,6 +109,7 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         // Only your own posts can be deleted. "didSelf" is the authenticated account's DID, stored at login.
         const didSelf = getItem("didSelf");
         if (didSelf != null && author.did == didSelf) {
+            metadata.isSelf = "true";
             actions.push("delete");
         }
     }
@@ -547,12 +559,70 @@ function contentForRecord(record) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, item, actionValue) {
+// A TID (timestamp identifier) — the AT-Protocol record-key format: a sortable, 13-char base32 encoding of a
+// microsecond timestamp (53 bits) plus a random 10-bit clock id. `app.bsky.feed.post` requires the rkey to be a
+// TID. We choose it client-side so a resubmit reuses the same rkey and `createRecord` rejects the duplicate
+// (Bluesky has no idempotency header).
+const _s32 = "234567abcdefghijklmnopqrstuvwxyz";
+let _tidLast = 0n;
+const _tidClock = BigInt(Math.floor(Math.random() * 1024));
+function nextTid() {
+	let micros = BigInt(Date.now()) * 1000n;
+	if (micros <= _tidLast) { micros = _tidLast + 1n; }
+	_tidLast = micros;
+	let n = (micros << 10n) | _tidClock;
+	let s = "";
+	for (let i = 0; i < 13; i++) { s = _s32[Number(n & 31n)] + s; n >>= 5n; }
+	return s;
+}
+
+// Resolve a handle (e.g. "alice.bsky.social") to its DID, or null if it can't be resolved.
+async function resolveHandle(handle) {
+	try {
+		const text = await sendRequest(`${site}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`);
+		return JSON.parse(text).did;
+	} catch (error) {
+		return null;
+	}
+}
+
+// Build richtext facets for the @mentions and links in `text`. Offsets are UTF-8 BYTE positions (byteEnd
+// exclusive), computed over the exact string sent as record.text. A mention that can't be resolved to a DID is
+// left as plain text rather than blocking the post.
+async function buildFacets(text) {
+	const encoder = new TextEncoder();
+	const byteLength = (s) => encoder.encode(s).length;
+	const facets = [];
+
+	// Mentions: @handle. atproto handles are a-z 0-9 . - (no underscore); a trailing dot isn't part of the handle.
+	for (const match of text.matchAll(/(^|\s|\()@([a-zA-Z0-9.-]+)/g)) {
+		const handle = match[2].replace(/\.+$/, "");
+		if (handle.length === 0) { continue; }
+		const did = await resolveHandle(handle);
+		if (did == null) { continue; }
+		const start = byteLength(text.slice(0, match.index + match[1].length));
+		const end = start + byteLength("@" + handle);
+		facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#mention", did: did }] });
+	}
+
+	// Links: http(s) URLs. Strip trailing punctuation (and an unmatched closing paren) the greedy match grabs.
+	for (const match of text.matchAll(/(^|\s|\()(https?:\/\/[^\s]+)/g)) {
+		let url = match[2].replace(/[.,;:!?]+$/, "");
+		if (url.endsWith(")") && !url.includes("(")) { url = url.slice(0, -1); }
+		const start = byteLength(text.slice(0, match.index + match[1].length));
+		const end = start + byteLength(url);
+		facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#link", uri: url }] });
+	}
+
+	return facets;
+}
+
+async function performAction(actionId, target, actionValue) {
 	// 2.0 stores the post's uri/cid/rkey in item.metadata; older items stored
 	// them as a JSON string under the action's value. Fall back for those.
 	// Removable a few months after 2.0 ships publicly, once pre-2.0 items have
 	// expired out of catalogs.
-	let metadata = item.metadata;
+	let metadata = target.metadata;
 	if (metadata == null) {
 		const legacy = actionValue;
 		if (legacy != null) {
@@ -593,10 +663,10 @@ async function performAction(actionId, item, actionValue) {
 		const rkey = jsonObject.uri.split("/").pop();
 
 		metadata.likeRkey = rkey;
-		item.metadata = metadata;
-		item.actions.delete("like");
-		item.actions.add("unlike");
-		return item;
+		target.metadata = metadata;
+		target.actions.delete("like");
+		target.actions.add("unlike");
+		return target;
 	}
 	else if (actionId == "unlike") {
 		const body = {
@@ -611,9 +681,9 @@ async function performAction(actionId, item, actionValue) {
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 		const jsonObject = JSON.parse(text);
 
-		item.actions.delete("unlike");
-		item.actions.add("like");
-		return item;
+		target.actions.delete("unlike");
+		target.actions.add("like");
+		return target;
 	}
 	else if (actionId == "repost") {
 		const body = {
@@ -637,10 +707,10 @@ async function performAction(actionId, item, actionValue) {
 		const rkey = jsonObject.uri.split("/").pop();
 
 		metadata.repostRkey = rkey;
-		item.metadata = metadata;
-		item.actions.delete("repost");
-		item.actions.add("unrepost");
-		return item;
+		target.metadata = metadata;
+		target.actions.delete("repost");
+		target.actions.add("unrepost");
+		return target;
 	}
 	else if (actionId == "unrepost") {
 		const body = {
@@ -655,9 +725,9 @@ async function performAction(actionId, item, actionValue) {
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 		const jsonObject = JSON.parse(text);
 
-		item.actions.delete("unrepost");
-		item.actions.add("repost");
-		return item;
+		target.actions.delete("unrepost");
+		target.actions.add("repost");
+		return target;
 	}
 	else if (actionId == "save") {
 		const body = {
@@ -670,9 +740,9 @@ async function performAction(actionId, item, actionValue) {
 		const extraHeaders = { "content-type": "application/json" };
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 
-		item.actions.delete("save");
-		item.actions.add("unsave");
-		return item;
+		target.actions.delete("save");
+		target.actions.add("unsave");
+		return target;
 	}
 	else if (actionId == "unsave") {
 		const body = {
@@ -684,9 +754,9 @@ async function performAction(actionId, item, actionValue) {
 		const extraHeaders = { "content-type": "application/json" };
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 
-		item.actions.delete("unsave");
-		item.actions.add("save");
-		return item;
+		target.actions.delete("unsave");
+		target.actions.add("save");
+		return target;
 	}
 	else if (actionId == "thread" || actionId == "replies") {
 		const uri = metadata.uri;
@@ -707,8 +777,8 @@ async function performAction(actionId, item, actionValue) {
 		// To fix this, we create a new post for the item returned by the API, and patch the attachments (preserving other
 		// attributes like annotations and dates).
 		const patchPost = postForItem(firstItem, true);
-		item.attachments = patchPost.attachments;
-		results.push(item);
+		target.attachments = patchPost.attachments;
+		results.push(target);
 
 		for (const reply of firstItem.replies) {
 			results.push(postForItem(reply, true));
@@ -727,7 +797,46 @@ async function performAction(actionId, item, actionValue) {
 		const parameters = JSON.stringify(body);
 		const extraHeaders = { "content-type": "application/json" };
 		await sendRequest(url, "POST", parameters, extraHeaders);
-		return [Item.delete(item.uri)];
+		return [Item.delete(target.uri)];
+	}
+	else if (actionId == "reply") {
+		// Open a composer for a reply. The reply refs (root + parent) and a client-chosen rkey ride in the draft's
+		// metadata; the mention is prefilled so the person replied-to gets tagged (via a facet built at send).
+		const draft = Draft.create();
+		const author = target.author;
+		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");
+		// Prefill the mention (facet built at send) — but not on a self-reply (you don't @ yourself).
+		const isSelf = metadata.isSelf === "true";
+		draft.text = (isSelf || author?.username == null) ? "" : author.username + " ";
+		draft.context = [target];
+		draft.metadata = {
+			parentUri: metadata.uri, parentCid: metadata.cid,
+			rootUri: metadata.rootUri ?? metadata.uri, rootCid: metadata.rootCid ?? metadata.cid,
+			rkey: nextTid(),
+		};
+		draft.actions.add("send");
+		return draft;
+	}
+	else if (actionId == "send") {
+		// Here `target` is the DRAFT. Create the post; the reply threads on the server and the timeline/thread
+		// reconciles on the next refresh (nothing to return — createRecord only yields {uri, cid}).
+		const draft = target;
+		const record = {
+			"$type": "app.bsky.feed.post",
+			text: draft.text,
+			createdAt: new Date().toISOString(),
+		};
+		if (draft.metadata.parentUri != null) {
+			record.reply = {
+				root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
+				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
+			};
+		}
+		const facets = await buildFacets(draft.text);
+		if (facets.length > 0) { record.facets = facets; }
+		const body = { collection: "app.bsky.feed.post", repo: did, rkey: draft.metadata.rkey, record: record };
+		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
+		await sendRequest(url, "POST", JSON.stringify(body), { "content-type": "application/json" });
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

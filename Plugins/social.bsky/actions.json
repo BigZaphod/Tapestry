@@ -1,6 +1,18 @@
 {
 	"items": [
 		{
+			"id": "reply",
+			"name": "Reply",
+			"icon": "arrow.turn.up.left",
+			"role": "compose"
+		},
+		{
+			"id": "send",
+			"name": "Post",
+			"icon": "paperplane",
+			"target": "draft"
+		},
+		{
 			"id": "repost",
 			"name": "Repost",
 			"icon": "tapestry.boost"
