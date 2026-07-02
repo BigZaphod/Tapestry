@@ -495,15 +495,16 @@ function contentForRecord(record) {
             const sortedFacets = record.facets.toSorted((a,b) => {return b?.index?.byteStart - a?.index?.byteStart})
             for (const facet of sortedFacets) {
                 if (facet.features.length > 0) {
-                    const bytes = stringToBytes(content);
+                    const bytes = new TextEncoder().encode(content);
                     
                     const prefixBytes = bytes.slice(0, facet.index.byteStart);
                     const suffixBytes = bytes.slice(facet.index.byteEnd);
                     const textBytes = bytes.slice(facet.index.byteStart, facet.index.byteEnd);
     
-                    const prefix = bytesToString(prefixBytes);
-                    const suffix = bytesToString(suffixBytes);
-                    const text = bytesToString(textBytes);
+                    const decoder = new TextDecoder();
+                    const prefix = decoder.decode(prefixBytes);
+                    const suffix = decoder.decode(suffixBytes);
+                    const text = decoder.decode(textBytes);
     
                     const feature = facet.features[0];
     
@@ -540,46 +541,6 @@ function contentForRecord(record) {
     finalContent = finalContent.replaceAll( "\x03", "&gt;"); // replace EOT (End Of Text) ASCII code with greater-than HTML entity
 
     return finalContent;
-}
-
-function stringToBytes(text) {
-    // the encoded text is in UTF-8 with percent escapes for characters other than: A–Z a–z 0–9 - _ . ! ~ * ' ( )
-    const encodedText = encodeURIComponent(text);
-
-    let resultArray = [];
-
-    for (let i = 0; i < encodedText.length; i++) {
-        const character = encodedText[i];
-        if (character == "%") {
-            // convert the hex encoding to an integer value
-            const hex = encodedText.substring(i+1, i+3);
-            const byte = parseInt(hex, 16);
-            resultArray.push(byte);
-            
-            // skip over the characters we just consumed
-            i += 2;
-          }
-          else {
-              // convert the unencoded character to an integer value
-            const byte = character.charCodeAt(0);
-            resultArray.push(byte);
-          }
-    }
-
-    return resultArray;
-}
-
-function bytesToString(bytes) {
-    // map all integer bytes to their percent escape equivalents
-    const hexes = bytes.map((element) => {
-        return "%" + element.toString(16).padStart(2, "0").toUpperCase();
-    });
-    const text = hexes.join("");
-
-    // convert the percent escaped UTF-8 to UTF-16
-    const resultString = decodeURIComponent(text);
-    
-    return resultString;
 }
 
 // By being in bluesky-shared.js, all of the Bluesky connectors get this.

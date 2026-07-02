@@ -30,6 +30,7 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
   * **Added** — composing: the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object, letting an action open a composer (for example, replying to a post). See [`performAction`](#performaction).
   * **Added** — [`crypto.randomUUID()`](#cryptorandomuuid), the standard function for generating a random UUID string (for idempotency keys and similar).
+  * **Added** — standard web utilities JavaScriptCore doesn't provide: [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes) and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
 Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
 
@@ -46,7 +47,7 @@ Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 beh
 
 ### 1.0
 
-The original API. `load()`, `verify()`, and `performAction()` report results through the `processResults()`, `processVerification()`, and `actionComplete()` functions, and report failures with `processError()`. These remain the behavior for any connector that targets a version below 2.0.
+The original API. `load()`, `verify()`, and `performAction()` report results through the `processResults()`, `processVerification()`, and `actionComplete()` functions, and report failures with `processError()`. These remain the behavior for any connector with `minimum_app_version` < 2.0.
 
 ---
 ## Variables
@@ -152,7 +153,7 @@ As of 1.3, the `attachments` array can also include ordinary `Item` instances to
 
 > **Note:** If the `provides_attachments` configuration parameter is not set or false, attachments will be generated automatically using the elements of the `body` HTML. If no other media attachments in the item have been set, inline images and videos will be used to create media attachments automatically. Additionally, the first link in the first paragraph will be checked for a link attachment. See the section on HTML Content for more information.
 
-> **Compatibility:** Item and PollAttachment attachments are only supported in Tapestry 1.3 or higher and will be ignored by older versions.
+> **Compatibility:** Requires `minimum_app_version` >= 1.3; ignored by older versions.
 
 #### shortcodes: Dictionary
 
@@ -173,7 +174,7 @@ The set of actions available for the item — on 2.0+ a `Set` of action-id strin
 
 A per-item bag of `String` key/value pairs for the connector's own use — most commonly the identifiers an action needs when it's performed, then read back from `item.metadata` in `performAction`. See the `actions.json` section.
 
-> **Compatibility:** `metadata` requires `minimum_app_version="2.0"`.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 #### Removing an Item
 
@@ -198,7 +199,7 @@ A removal returned from `load()` lets a connector that can discover deleted cont
 
 You may optionally pass the time the removal happened as a second argument — `Item.delete(uri, date)`. If omitted, the current time is used. When an item and a removal for the same `uri` are seen together, the newer-dated one wins, so a removal dated earlier than a fresh version of the item is ignored (and a removal you date in the past won't undo a more recent update).
 
-> **Compatibility:** Removals require `minimum_app_version="2.0"` and are ignored by older versions.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0; ignored by older versions.
 
 ---
 ### Identity
@@ -408,7 +409,7 @@ An optional date that the poll ends. If not specified, Tapestry renders the poll
 
 Set to `true` if the poll allows mutliple choices or not.
 
-> **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Requires `minimum_app_version` >= 1.3.
 
 ---
 ### PollOption
@@ -427,7 +428,7 @@ const poll = PollAttachment.create([a, b, c]);
 
 If `votes` is left unspecified on one or more options in a `PollAttachment`, Tapestry will not show vote totals or percentages.
 
-> **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Requires `minimum_app_version` >= 1.3.
 
 ---
 ### Draft
@@ -465,7 +466,7 @@ The ids of the *submit* actions that apply to this draft (the buttons shown in t
 
 An optional message shown to the user when a submit is returned to the composer for a correction (see [`performAction`](#performaction)).
 
-> **Compatibility:** `Draft` requires `minimum_app_version="2.0"`.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ## Interface Functions
@@ -502,7 +503,7 @@ When a Tapestry user adds multiple feeds for the same connector that requires au
 
 If `icon` or `displayName` are omitted, then the ones supplied by `accountIdentity` will be used instead, if possible.
 
-> **Compatibility:** Before 2.0, the result was reported by calling `processVerification()` (and failures via `processError()`) rather than returned/thrown.
+> **Compatibility:** When `minimum_app_version` < 2.0, the result is reported by calling `processVerification()` (and failures via `processError()`) rather than returned/thrown.
 
 ---
 ### load
@@ -515,7 +516,7 @@ Optionally, you can deliver items incrementally — for example, from several se
 
 The array may also include *removals* if the connector can discover that content has been deleted — see [Removing an Item](#removing-an-item).
 
-> **Compatibility:** Before 2.0, `load()` returned nothing — results were always delivered with `processResults()` and the load ended when its `isComplete` flag was true, and errors were reported with `processError()`.
+> **Compatibility:** When `minimum_app_version` < 2.0, `load()` returns nothing — results are delivered with `processResults()`, the load ends when its `isComplete` flag is true, and errors are reported with `processError()`.
 
 ---
 ### performAction
@@ -532,7 +533,7 @@ Any data an action requires can be set in (and then read from) `item.metadata` o
 
 > **Note:** Only one action per feed is allowed to be running at a time.
 
-> **Compatibility:** Before 2.0, the argument order was `performAction(actionId, actionValue, item)` and the result was reported by calling `actionComplete()` rather than returned. As of 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as the compatibility hook described above. See `actions.json`.
+> **Compatibility:** When `minimum_app_version` < 2.0, the argument order is `performAction(actionId, actionValue, item)` and the result is reported via `actionComplete()` rather than returned. On >= 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as the compatibility hook described above.
 
 #### Composing
 
@@ -671,7 +672,7 @@ For feed-like data sources (such as RSS), this often results in a very significa
 
 > **Note:** Not all web servers are correctly configured to support conditional requests. If the server doesn't send the required headers or otherwise ignores them, this function will fallback to behaving identically to `sendRequest()`.
 
-> **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Requires `minimum_app_version` >= 1.3.
 
 ---
 ### lookupIcon
@@ -691,14 +692,14 @@ Delivers a batch of retrieved items to the Tapestry app. Call this from `load()`
 
   * results: `Array` with `Item` objects. The array may also include *removals* — see [Removing an Item](#removing-an-item).
 
-> **Compatibility:** Before 2.0, `processResults(results, isComplete)` took a second `Boolean` argument (default true) that ended the load when true — connectors making several requests needed a reference counter to know when to set it. On 2.0+, completion is signaled by `load()` returning and the `isComplete` argument is ignored.
+> **Compatibility:** When `minimum_app_version` < 2.0, `processResults(results, isComplete)` takes a second `Boolean` (default true) that ends the load when true — connectors making several requests needed a reference counter to know when to set it. On >= 2.0, completion is signaled by `load()` returning and the `isComplete` argument is ignored.
 
 ---
 ### processError
 
 `processError(error)` *(deprecated)*
 
-> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, throw an `Error` from `load()`, `performAction()`, or `verify()` instead — it reports the failure the same way.
+> **Compatibility:** Only for `minimum_app_version` < 2.0. On >= 2.0, throw an `Error` from `load()`, `performAction()`, or `verify()` instead — it reports the failure the same way.
 
 Sends an error to the Tapestry app for display.
 
@@ -709,7 +710,7 @@ Sends an error to the Tapestry app for display.
 
 `processVerification(verification)` *(deprecated)*
 
-> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `verify()` returns the verification result (or throws) — see `verify()`.
+> **Compatibility:** Only for `minimum_app_version` < 2.0. On >= 2.0, `verify()` returns the verification result (or throws) instead.
 
 Reports the result of verification. The `verification` value — a result `Object` or a `String` display name — takes the same form documented under `verify()`.
 
@@ -718,14 +719,14 @@ Reports the result of verification. The `verification` value — a result `Objec
 
 `actionComplete(results, error)` *(deprecated)*
 
-> **Compatibility:** This is only used by connectors with a `minimum_app_version` below 2.0. On 2.0+, `performAction()` returns its result (an `Item`, an `Array` of `Item`s, or nothing) and throws an `Error` to report a failure — see `performAction()`.
+> **Compatibility:** Only for `minimum_app_version` < 2.0. On >= 2.0, `performAction()` returns its result and throws an `Error` to report a failure instead.
 
 Indicates that the action has been performed. Must be called.
 
   * results: An `Item` or Array of `Item`s that were updated. A null value indicates there were no results.
   * error: If not null, the `Error` indicates what went wrong and will be displayed in the user interface.
 
-See section on `actions.json` for more information on how to complete actions. (Returning an array of `Item`s requires `minimum_app_version="1.4"` or higher.)
+See section on `actions.json` for more information on how to complete actions. (Returning an array of `Item`s requires `minimum_app_version` >= 1.4.)
 
 ---
 ### xmlParse
@@ -863,7 +864,7 @@ Finally, not all XML nodes will be accessible with a object property path. An XM
 
 This functionality should be enough to parse XML generated from hierarchical data, such as an RSS feed generated by a WordPress database of posts.
 
-> **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Returns a `Promise` when `minimum_app_version` >= 1.3; synchronous below that.
 
 ---
 ### plistParse
@@ -878,7 +879,7 @@ If `minimum_app_version` is unspecified or below `1.3`, this synchronously retur
 
 Note that old style property lists or JSON property lists are not supported.
 
-> **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Returns a `Promise` when `minimum_app_version` >= 1.3; synchronous below that.
 
 ---
 ### extractProperties
@@ -893,7 +894,7 @@ If `minimum_app_version` is unspecified or below `1.3`, this synchronously retur
 
 The `Object` representation contains the HTML’s properties. These values can be used to generate link previews or enhance the content without scraping the markup.
 
-> **Compatibility:** Returns a `Promise` if `minimum_app_version="1.3"` or higher.
+> **Compatibility:** Returns a `Promise` when `minimum_app_version` >= 1.3; synchronous below that.
 
 ---
 ### setItem
@@ -928,7 +929,38 @@ All items in local storage are removed.
 
 Returns a new, randomly generated UUID `String` (for example, `"9b2e5c1a-4f7d-4a2e-8c1b-0a1b2c3d4e5f"`). Useful for idempotency keys and other unique identifiers. This matches the standard browser and Node.js `crypto.randomUUID()`.
 
-> **Compatibility:** available in Tapestry 2.0 and later. A connector that uses it should set `minimum_app_version` to 2.0 so it does not load on older versions where `crypto` is unavailable.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### TextEncoder and TextDecoder
+
+`new TextEncoder().encode(string) → Uint8Array`
+`new TextDecoder().decode(bytes) → String`
+
+Convert between a `String` and its UTF-8 bytes (a `Uint8Array`) — the standard web Encoding API, which JavaScriptCore does not include. Useful whenever you need UTF-8 **byte** positions rather than character positions; for example, Bluesky richtext facets are expressed as UTF-8 byte offsets.
+
+```javascript
+const bytes = new TextEncoder().encode("hi 👋");           // a Uint8Array (8 bytes)
+const emoji = new TextDecoder().decode(bytes.slice(3, 7)); // "👋"
+```
+
+This is a minimal polyfill — `encode`/`decode` only, UTF-8 only.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### btoa and atob
+
+`btoa(binaryString) → String`
+`atob(base64String) → String`
+
+Base64-encode (`btoa`) and decode (`atob`), matching the standard web functions that JavaScriptCore does not include. Following the web spec, `btoa` takes a "binary string" whose character codes are all in the range 0–255 (it throws otherwise). To base64 arbitrary Unicode text, encode it to UTF-8 bytes first:
+
+```javascript
+const b64 = btoa(String.fromCharCode(...new TextEncoder().encode("héllo")));
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### require
@@ -1859,7 +1891,7 @@ async function performAction(actionId, item, actionValue) {
 }
 ```
 
-> **Compatibility:** `item.metadata` and the `item.actions` `Set` require `minimum_app_version="2.0"`. Before 2.0, `item.actions` was a plain object and an action stored its own value directly — `item.actions = { favorite: "123456" }` — which `performAction(actionId, actionValue, item)` received as its second argument. On 2.0+ that value moved to the trailing `actionValue` argument purely as a compatibility hook for items a pre-2.0 version of the connector created; new connectors store data in `item.metadata` and can ignore it. Manage `item.actions` with `item.actions.add(id)` / `item.actions.delete(id)`, not by assigning to it.
+> **Compatibility:** `item.metadata` and the `item.actions` `Set` require `minimum_app_version` >= 2.0. When `minimum_app_version` < 2.0, `item.actions` is a plain object and an action stores its own value directly — `item.actions = { favorite: "123456" }` — which `performAction(actionId, actionValue, item)` receives as its second argument. On >= 2.0 that value moved to the trailing `actionValue` argument purely as a compatibility hook for items a pre-2.0 version of the connector created; new connectors store data in `item.metadata` and can ignore it. Manage `item.actions` with `item.actions.add(id)` / `item.actions.delete(id)`, not by assigning to it.
 
 #### Action Roles
 
