@@ -22,10 +22,10 @@ The largest change since 1.0: the interface functions now **return** their resul
 
   * **Changed** — [`load()`](#load) returns an `Array` of `Item`s; the load ends when it returns. [`processResults()`](#processresults) still works for incremental delivery, but its `isComplete` argument is now ignored.
   * **Changed** — [`verify()`](#verify) returns the verification result (an `Object` or display-name `String`) instead of reporting it through `processVerification()`.
-  * **Changed** — [`performAction(actionId, item)`](#performaction) returns its result; the `actionValue` argument was removed (actions now read data from `item.metadata`).
+  * **Changed** — [`performAction(actionId, item, actionValue)`](#performaction) returns its result (actions now read their data from `item.metadata`); `actionValue` moved to the trailing position as a compatibility hook for items created by a pre-2.0 connector.
   * **Removed** (when targeting 2.0) — `processError()`, `processVerification()`, and `actionComplete()` are no longer provided. Throw an `Error` instead.
   * **Added** — [`item.metadata`](#metadata-dictionary), a per-item `[String: String]` bag for data an action needs.
-  * **Added** — [`item.addAction()` / `item.removeAction()`](#actionsjson) for managing an item's actions, replacing the old per-action value strings (`item.actions = { id: "value" }`).
+  * **Changed** — [`item.actions`](#actions-set) is a `Set` of action ids; manage it with the native `item.actions.add(id)` / `item.actions.delete(id)`, replacing the old per-action value strings (`item.actions = { id: "value" }`).
   * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
   * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
 
@@ -76,31 +76,20 @@ See the Configuration section below for the specification of `ui-config.json` an
 ---
 ## Objects
 
-The following objects are used to create content for the Tapestry app.
+Tapestry's content types — `Item`, `Identity`, `Annotation`, `MediaAttachment`, `LinkAttachment`, `PollAttachment`, and `PollOption` — are **plain JavaScript objects**. The `create…` factory functions documented below are conveniences that stamp the correct shape for you (each object's `kind`, and an empty `actions` Set on an item). You are free to build and return object literals of the same shape instead — these two are equivalent:
 
-Note that the properties of these objects have implicit type conversions when values are set. For example:
+```javascript
+const item = Item.createWithUriDate(uri, date);
+item.title = "Hello.";
 
-```
-> item = Item.createWithUriDate(uri, date);
-< TapestryCore.ItemObject { … }
+// …is the same as…
 
-> item.body
-< undefined
-
-> typeof(item.body)
-< "undefined"
-
-> item.body = undefined
-< undefined
-
-> item.body
-< "undefined"
-
-> typeof(item.body)
-< "string"
+const item = { kind: "item", uri: uri, date: date, actions: new Set(), title: "Hello." };
 ```
 
-If you want to return an undefined (nil) value back to Tapestry, do not set the property. For example, to conditionally set the body property, you'd use:
+Every object carries a `kind` (`"item"`, `"identity"`, `"media"`, `"link"`, `"poll"`, …) so Tapestry knows what it is; the factories set it. An `Item` may omit `kind` — an untagged object in an item position is read as an item — but an attachment literal **must** include its `kind` so it's recognized. Each object's section below documents its shape.
+
+To leave a value unset (nil on the Tapestry side), simply don't set the property:
 
 ```javascript
 const item = Item.createWithUriDate(uri, date);
@@ -108,6 +97,9 @@ if (myContent != null) {
 	item.body = myContent;
 }
 ```
+
+A `String` property also accepts a number or boolean and stores its string form (`42` → `"42"`); any other type mismatch is ignored rather than raising an error.
+
 ---
 ### Item
 
@@ -171,9 +163,9 @@ item.shortcodes = { "ONE": "https://example.com/one.jpg", "CHOCK": "https://choc
 
 Shortcode tokens must not contain spaces or additional colons: using `:my fancy code:` or `:what:the:hell:` is invalid and will be ignored. 
 
-#### actions: Dictionary
+#### actions: Set
 
-The set of actions available for the item. On 2.0+, manage it with `item.addAction()` / `item.removeAction()` rather than setting it directly, and store any data the actions need in `metadata`. See the `actions.json` section.
+The set of actions available for the item — on 2.0+ a `Set` of action-id strings. Manage it with the native Set methods `item.actions.add(id)` / `item.actions.delete(id)` (and `item.actions.has(id)`), and store any data the actions need in `metadata`. (An array of ids — `item.actions = ["favorite", "boost"]` — is also accepted.) See the `actions.json` section.
 
 #### metadata: Dictionary
 
@@ -192,7 +184,7 @@ const removal = Item.delete(uri);
 The `uri` is the same value the item was created with — that's all Tapestry needs to identify it. A removal can go anywhere an `Item` can, mixed freely into the `Array` returned from `load()` or `performAction()`. For example, a "delete post" action removes the post on the service and then returns a removal for it:
 
 ```javascript
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	if (actionId == "delete") {
 		await sendRequest(`${site}/api/v1/statuses/${item.metadata.id}`, "DELETE");
 		return [Item.delete(item.uri)];
@@ -271,7 +263,7 @@ A URI with more information about the annotation. For things like boosts/reposts
 ---
 ### MediaAttachment
 
-`Item`s can also have media attachments. Photos, videos, and audio are commonly available from APIs and other data sources, and this is how you get them into the timeline. They will be displayed under the HTML content.
+`Item`s can also have media attachments. Photos, videos, and audio are commonly available from APIs and other data sources, and this is how you get them into the timeline. They will be displayed under the HTML content. (A media attachment's `kind` is `"media"`; the factory sets it — include it if you build a literal.)
 
 ```javascript
 const attachment = MediaAttachment.createWithUrl(url);
@@ -347,6 +339,8 @@ An object with `x` and `x` properties. The values are used to center media in th
 ---
 ### LinkAttachment
 
+A link attachment's `kind` is `"link"`; the factory sets it — include it if you build a literal.
+
 #### url: String (required)
 
 A string containing the URL for the link on the Internet.
@@ -390,7 +384,7 @@ An object with `width` and `height` properties, typically from Open Graph [og:im
 ---
 ### PollAttachment
 
-Used for attaching information about a poll to an `Item`.
+Used for attaching information about a poll to an `Item`. A poll attachment's `kind` is `"poll"`; the factory sets it — include it if you build a literal. (Polls require `minimum_app_version` 1.3 or higher.)
 
 ```javascript
 const attachment = PollAttachment.create();
@@ -486,18 +480,19 @@ The array may also include *removals* if the connector can discover that content
 ---
 ### performAction
 
-`performAction(actionId, item)`
+`performAction(actionId, item, actionValue)`
 
 Tapestry calls this function when an action needs to be performed by the connector.
 
   * actionId: A `String` with the action id
   * item: the `Item` instance that the action is being requested for.
+  * actionValue: A compatibility hook you can usually ignore. Data for an action lives in `item.metadata`; `actionValue` carries the value stored for this action on items created by a *pre-2.0* version of the connector (before `metadata` existed), letting a connector migrating from an older version fall back to it. It is an empty string for items created by a 2.0+ connector.
 
 Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
 
 > **Note:** Only one action per feed is allowed to be running at a time.
 
-> **Compatibility:** Before 2.0, `performAction(actionId, actionValue, item)` also received the action's stored `actionValue`, and the result was reported by calling `actionComplete()` rather than returned. As of 2.0, `actionValue` is omitted and the result is returned (or an `Error` thrown). See `actions.json`.
+> **Compatibility:** Before 2.0, the argument order was `performAction(actionId, actionValue, item)` and the result was reported by calling `actionComplete()` rather than returned. As of 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as the compatibility hook described above. See `actions.json`.
 
 See the section on `actions.json` for more information on how to define and perform actions.
 
@@ -1723,26 +1718,26 @@ Actions are displayed or preferred in the order they are defined in the `actions
 }
 ```
 
-When returning an `Item` from `load()`, use `item.addAction()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
+When returning an `Item` from `load()`, use `item.actions.add()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
 
 For example, an action that marks an item as a favorite might need an identifier when processing the action in `performAction`:
 
 ```javascript
 	item.metadata = { id: "123456" };
-	item.addAction("favorite");
+	item.actions.add("favorite");
 ```
 
 `metadata` is a single set of string key/value pairs shared by all of an item's actions, and can hold structured data with multiple keys:
 
 ```javascript
 	item.metadata = { uri: "at:...", cid: "..." };
-	item.addAction("like");
-	item.addAction("repost");
+	item.actions.add("like");
+	item.actions.add("repost");
 ```
 
 When an item has one or more actions, a menu or one or more action buttons will be displayed in the app. When a user selects one, the `performAction` function is called with the action `id` and the `item`.
 
-It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or name so the user can tell that the state has changed. Use `item.removeAction()` and `item.addAction()` within your `performAction` implementation to do this.
+It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or name so the user can tell that the state has changed. Use `item.actions.delete()` and `item.actions.add()` within your `performAction` implementation to do this.
 
 The modified item is returned to Tapestry by returning it from `performAction`. If the action cannot be performed, throw an `Error` and it will be displayed to the user.
 
@@ -1750,7 +1745,7 @@ This example performs "favorite" and "unfavorite" on an item. Note that any part
 
 ```javascript
 
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	console.log(`actionId = ${actionId}`);
 	if (actionId == "favorite") {
 		let id = item.metadata.id;
@@ -1760,8 +1755,8 @@ async function performAction(actionId, item) {
 		content += "<p>Faved!</p>";
 		item.body = content;
 
-		item.removeAction("favorite");
-		item.addAction("unfavorite");
+		item.actions.delete("favorite");
+		item.actions.add("unfavorite");
 		return item;
 	}
 	else if (actionId == "unfavorite") {
@@ -1772,8 +1767,8 @@ async function performAction(actionId, item) {
 		content += "<p><strong>UNFAVED!</strong></p>";
 		item.body = content;
 
-		item.removeAction("unfavorite");
-		item.addAction("favorite");
+		item.actions.delete("unfavorite");
+		item.actions.add("favorite");
 		return item;
 	}
 	else if (actionId == "whoops") {
@@ -1782,7 +1777,7 @@ async function performAction(actionId, item) {
 }
 ```
 
-> **Compatibility:** `item.metadata`, `item.addAction()`, and `item.removeAction()` require `minimum_app_version="2.0"`, and at that version `performAction` no longer receives the `actionValue` argument. Before 2.0, an action stored its own value directly — `item.actions = { favorite: "123456" }` — which was passed to `performAction`. New connectors should set `minimum_app_version` to 2.0 or higher and avoid using the `item.actions` property directly.
+> **Compatibility:** `item.metadata` and the `item.actions` `Set` require `minimum_app_version="2.0"`. Before 2.0, `item.actions` was a plain object and an action stored its own value directly — `item.actions = { favorite: "123456" }` — which `performAction(actionId, actionValue, item)` received as its second argument. On 2.0+ that value moved to the trailing `actionValue` argument purely as a compatibility hook for items a pre-2.0 version of the connector created; new connectors store data in `item.metadata` and can ignore it. Manage `item.actions` with `item.actions.add(id)` / `item.actions.delete(id)`, not by assigning to it.
 
 #### Action Roles
 

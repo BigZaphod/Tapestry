@@ -1,14 +1,14 @@
 
 // com.tumblr - shared
 
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	// 2.0 stores the post's fields in item.metadata; older items stored each
 	// action's fields as a JSON string under that action's value. Fall back for
 	// those. Removable a few months after 2.0 ships publicly, once pre-2.0 items
 	// have expired out of catalogs.
 	let metadata = item.metadata;
 	if (metadata == null) {
-		const legacy = item.actions?.[actionId];
+		const legacy = actionValue;
 		if (legacy != null) { metadata = JSON.parse(legacy); }
 	}
 
@@ -23,8 +23,8 @@ async function performAction(actionId, item) {
 		const url = `${site}/v2/user/like`;
 		const jsonObject = await sendAction(url, parameters);
 		if (jsonObject?.meta?.status == 200) {
-			item.removeAction("like");
-			item.addAction("unlike");
+			item.actions.delete("like");
+			item.actions.add("unlike");
 			return item;
 		}
 		throw new Error(`Like failed with ${jsonObject?.meta?.status}`);
@@ -33,8 +33,8 @@ async function performAction(actionId, item) {
 		const url = `${site}/v2/user/unlike`;
 		const jsonObject = await sendAction(url, parameters);
 		if (jsonObject?.meta?.status == 200) {
-			item.removeAction("unlike");
-			item.addAction("like");
+			item.actions.delete("unlike");
+			item.actions.add("like");
 			return item;
 		}
 		throw new Error(`Unlike failed with ${jsonObject?.meta?.status}`);
@@ -43,8 +43,8 @@ async function performAction(actionId, item) {
 		const url = `${site}/v2/blog/${blogName}/post/reblog`;
 		const jsonObject = await sendAction(url, parameters);
 		if (jsonObject?.meta?.status == 201) {
-			item.removeAction("reblog");
-			item.addAction("unreblog");
+			item.actions.delete("reblog");
+			item.actions.add("unreblog");
 			return item;
 		}
 		throw new Error(`Reblog failed with ${jsonObject?.meta?.status}`);
@@ -498,16 +498,16 @@ function postForItem(item) {
 
 	if (item.community == null) { // community posts can't be liked or reblogged
 		if (!isReblogged) {
-			post.addAction("reblog");
+			post.actions.add("reblog");
 		}
-		post.addAction(isLiked ? "unlike" : "like");
+		post.actions.add(isLiked ? "unlike" : "like");
 	}
 	// item.note_count is available, but doesn't reflect what the API will return
 	if (isReblog && item.trail != null && item.trail.length > 1) {
-		post.addAction("trail");
+		post.actions.add("trail");
 	}
 	else {
-		post.addAction("notes");
+		post.actions.add("notes");
 	}
 
 	return post;

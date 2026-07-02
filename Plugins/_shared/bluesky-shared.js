@@ -159,7 +159,7 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         post.author = identity;
         post.metadata = metadata;
         for (const action of actions) {
-            post.addAction(action);
+            post.actions.add(action);
         }
         if (attachments != null) {
             post.attachments = attachments
@@ -586,14 +586,14 @@ function bytesToString(bytes) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	// 2.0 stores the post's uri/cid/rkey in item.metadata; older items stored
 	// them as a JSON string under the action's value. Fall back for those.
 	// Removable a few months after 2.0 ships publicly, once pre-2.0 items have
 	// expired out of catalogs.
 	let metadata = item.metadata;
 	if (metadata == null) {
-		const legacy = item.actions?.[actionId];
+		const legacy = actionValue;
 		if (legacy != null) {
 			const values = JSON.parse(legacy);
 			metadata = { uri: values.uri, cid: values.cid };
@@ -633,8 +633,8 @@ async function performAction(actionId, item) {
 
 		metadata.likeRkey = rkey;
 		item.metadata = metadata;
-		item.removeAction("like");
-		item.addAction("unlike");
+		item.actions.delete("like");
+		item.actions.add("unlike");
 		return item;
 	}
 	else if (actionId == "unlike") {
@@ -650,8 +650,8 @@ async function performAction(actionId, item) {
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 		const jsonObject = JSON.parse(text);
 
-		item.removeAction("unlike");
-		item.addAction("like");
+		item.actions.delete("unlike");
+		item.actions.add("like");
 		return item;
 	}
 	else if (actionId == "repost") {
@@ -677,8 +677,8 @@ async function performAction(actionId, item) {
 
 		metadata.repostRkey = rkey;
 		item.metadata = metadata;
-		item.removeAction("repost");
-		item.addAction("unrepost");
+		item.actions.delete("repost");
+		item.actions.add("unrepost");
 		return item;
 	}
 	else if (actionId == "unrepost") {
@@ -694,8 +694,8 @@ async function performAction(actionId, item) {
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 		const jsonObject = JSON.parse(text);
 
-		item.removeAction("unrepost");
-		item.addAction("repost");
+		item.actions.delete("unrepost");
+		item.actions.add("repost");
 		return item;
 	}
 	else if (actionId == "save") {
@@ -709,8 +709,8 @@ async function performAction(actionId, item) {
 		const extraHeaders = { "content-type": "application/json" };
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 
-		item.removeAction("save");
-		item.addAction("unsave");
+		item.actions.delete("save");
+		item.actions.add("unsave");
 		return item;
 	}
 	else if (actionId == "unsave") {
@@ -723,8 +723,8 @@ async function performAction(actionId, item) {
 		const extraHeaders = { "content-type": "application/json" };
 		const text = await sendRequest(url, "POST", parameters, extraHeaders);
 
-		item.removeAction("unsave");
-		item.addAction("save");
+		item.actions.delete("unsave");
+		item.actions.add("save");
 		return item;
 	}
 	else if (actionId == "thread" || actionId == "replies") {

@@ -144,18 +144,18 @@ function postForItem(item) {
 
 	post.metadata = { id: item.id };
 
-	//post.addAction("reply");
+	//post.actions.add("reply");
 
-	post.addAction(item?.favourited ? "unfavorite" : "favorite");
-	post.addAction(item?.reblogged ? "unboost" : "boost");
-	post.addAction(item?.bookmarked ? "unbookmark" : "bookmark");
-	post.addAction(item?.replies_count > 0 ? "replies" : "thread");
+	post.actions.add(item?.favourited ? "unfavorite" : "favorite");
+	post.actions.add(item?.reblogged ? "unboost" : "boost");
+	post.actions.add(item?.bookmarked ? "unbookmark" : "bookmark");
+	post.actions.add(item?.replies_count > 0 ? "replies" : "thread");
 
 	// Only your own posts can be deleted. `account` is the post's author (a boost was already unwrapped to the
 	// original post above), and "userId" is the authenticated account stored during verify/load.
 	const myUserId = getItem("userId");
 	if (myUserId != null && account?.id == myUserId) {
-		post.addAction("delete");
+		post.actions.add("delete");
 	}
 
 	let attachments = [];
@@ -275,48 +275,48 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	// 2.0 stores the status id in item.metadata; older items stored it as the
 	// action's value. Fall back for those. Removable a few months after 2.0
 	// ships publicly, once pre-2.0 items have expired out of catalogs.
-	const id = item.metadata?.id ?? item.actions?.[actionId];
+	const id = item.metadata?.id ?? actionValue;
 
 	if (actionId == "favorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
-		item.removeAction("favorite");
-		item.addAction("unfavorite");
+		item.actions.delete("favorite");
+		item.actions.add("unfavorite");
 		return item;
 	}
 	else if (actionId == "unfavorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unfavourite`, "POST");
-		item.removeAction("unfavorite");
-		item.addAction("favorite");
+		item.actions.delete("unfavorite");
+		item.actions.add("favorite");
 		return item;
 	}
 	else if (actionId == "boost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/reblog`, "POST");
-		item.removeAction("boost");
-		item.addAction("unboost");
+		item.actions.delete("boost");
+		item.actions.add("unboost");
 		item.annotations = [Annotation.createWithText("Boosted by you")];
 		return item;
 	}
 	else if (actionId == "unboost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unreblog`, "POST");
-		item.removeAction("unboost");
-		item.addAction("boost");
+		item.actions.delete("unboost");
+		item.actions.add("boost");
 		item.annotations = [];
 		return item;
 	}
 	else if (actionId == "bookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/bookmark`, "POST");
-		item.removeAction("bookmark");
-		item.addAction("unbookmark");
+		item.actions.delete("bookmark");
+		item.actions.add("unbookmark");
 		return item;
 	}
 	else if (actionId == "unbookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unbookmark`, "POST");
-		item.removeAction("unbookmark");
-		item.addAction("bookmark");
+		item.actions.delete("unbookmark");
+		item.actions.add("bookmark");
 		return item;
 	}
 	else if (actionId == "thread" || actionId == "replies") {

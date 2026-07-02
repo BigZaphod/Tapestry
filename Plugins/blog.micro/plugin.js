@@ -44,24 +44,24 @@ async function load() {
 	return results;
 }
 
-async function performAction(actionId, item) {
+async function performAction(actionId, item, actionValue) {
 	// 2.0 stores the post id in item.metadata; older items stored it as the
 	// action's value. Fall back for those. Removable a few months after 2.0
 	// ships publicly, once pre-2.0 items have expired out of catalogs.
-	const id = item.metadata?.id ?? item.actions?.[actionId];
+	const id = item.metadata?.id ?? actionValue;
 
 	if (actionId == "bookmark") {
 		const text = await sendRequest(`${site}/posts/favorites`, "POST", `id=${id}`)
 
-		item.removeAction("bookmark");
-		item.addAction("unbookmark");
+		item.actions.delete("bookmark");
+		item.actions.add("unbookmark");
 		return item;
 	}
 	else if (actionId == "unbookmark") {
 		const text = await sendRequest(`${site}/posts/favorites/${id}`, "DELETE")
 
-		item.removeAction("unbookmark");
-		item.addAction("bookmark");
+		item.actions.delete("unbookmark");
+		item.actions.add("bookmark");
 		return item;
 	}
 	else if (actionId == "replies" || actionId == "thread") {
@@ -101,8 +101,8 @@ function postForItem(item, filterMentions) {
 	post.body = content;
 	post.author = identity;
 	post.metadata = { id: item.id };
-	post.addAction(item["_microblog"].is_bookmark ? "unbookmark" : "bookmark");
-	post.addAction(item["_microblog"].is_conversation ? "replies" : "thread");
+	post.actions.add(item["_microblog"].is_bookmark ? "unbookmark" : "bookmark");
+	post.actions.add(item["_microblog"].is_conversation ? "replies" : "thread");
 	
 	return post;
 }
