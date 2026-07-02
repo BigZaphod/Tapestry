@@ -144,7 +144,7 @@ function postForItem(item) {
 
 	post.metadata = { id: item.id };
 
-	//post.actions.add("reply");
+	post.actions.add("reply");
 
 	post.actions.add(item?.favourited ? "unfavorite" : "favorite");
 	post.actions.add(item?.reblogged ? "unboost" : "boost");
@@ -275,57 +275,58 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-async function performAction(actionId, item, actionValue) {
-	// 2.0 stores the status id in item.metadata; older items stored it as the
+async function performAction(actionId, target, actionValue) {
+	// 2.0 stores the status id on the item's metadata; older items stored it as the
 	// action's value. Fall back for those. Removable a few months after 2.0
 	// ships publicly, once pre-2.0 items have expired out of catalogs.
-	const id = item.metadata?.id ?? actionValue;
+	const id = target.metadata?.id ?? actionValue;
 
 	if (actionId == "favorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
-		item.actions.delete("favorite");
-		item.actions.add("unfavorite");
-		return item;
+		target.actions.delete("favorite");
+		target.actions.add("unfavorite");
+		return target;
 	}
 	else if (actionId == "unfavorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unfavourite`, "POST");
-		item.actions.delete("unfavorite");
-		item.actions.add("favorite");
-		return item;
+		target.actions.delete("unfavorite");
+		target.actions.add("favorite");
+		return target;
 	}
 	else if (actionId == "boost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/reblog`, "POST");
-		item.actions.delete("boost");
-		item.actions.add("unboost");
-		item.annotations = [Annotation.createWithText("Boosted by you")];
-		return item;
+		target.actions.delete("boost");
+		target.actions.add("unboost");
+		target.annotations = [Annotation.createWithText("Boosted by you")];
+		return target;
 	}
 	else if (actionId == "unboost") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unreblog`, "POST");
-		item.actions.delete("unboost");
-		item.actions.add("boost");
-		item.annotations = [];
-		return item;
+		target.actions.delete("unboost");
+		target.actions.add("boost");
+		target.annotations = [];
+		return target;
 	}
 	else if (actionId == "bookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/bookmark`, "POST");
-		item.actions.delete("bookmark");
-		item.actions.add("unbookmark");
-		return item;
+		target.actions.delete("bookmark");
+		target.actions.add("unbookmark");
+		return target;
 	}
 	else if (actionId == "unbookmark") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/unbookmark`, "POST");
-		item.actions.delete("unbookmark");
-		item.actions.add("bookmark");
-		return item;
+		target.actions.delete("unbookmark");
+		target.actions.add("bookmark");
+		return target;
 	}
 	else if (actionId == "thread" || actionId == "replies") {
 		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}/context`));
 		let results = [];
+		// `item` here is a raw Mastodon status from the API (as postForItem expects); `target` is our Item.
 		for (const item of context["ancestors"]) {
 			results.push(postForItem(item));
 		}
-		results.push(item);
+		results.push(target);
 		for (const item of context["descendants"]) {
 			results.push(postForItem(item));
 		}
@@ -333,7 +334,31 @@ async function performAction(actionId, item, actionValue) {
 	}
 	else if (actionId == "delete") {
 		await sendRequest(`${site}/api/v1/statuses/${id}`, "DELETE");
-		return [Item.delete(item.uri)];
+		return [Item.delete(target.uri)];
+	}
+	else if (actionId == "reply") {
+		// Open a composer for a reply. Threading rides `in_reply_to_id` (kept in the draft's metadata); the
+		// mention is prefilled into the text so the person replied-to is notified (Mastodon won't add it for us).
+		const draft = Draft.create();
+		const mention = target.author?.username;   // "@user@domain", or undefined
+		draft.title = "Reply to " + (target.author?.name ?? mention ?? "post");
+		draft.text = mention ? mention + " " : "";
+		draft.context = [target];
+		draft.metadata = { replyTo: id, idempotencyKey: crypto.randomUUID() };
+		draft.actions.add("send");
+		return draft;
+	}
+	else if (actionId == "send") {
+		// Here `target` is the DRAFT (a target:"draft" action). Create the status and return the new item; it
+		// lands in the timeline on the next refresh.
+		const draft = target;
+		const body = { status: draft.text, in_reply_to_id: draft.metadata?.replyTo };
+		const headers = {
+			"content-type": "application/json",
+			"Idempotency-Key": draft.metadata?.idempotencyKey ?? crypto.randomUUID(),
+		};
+		const response = await sendRequest(`${site}/api/v1/statuses`, "POST", JSON.stringify(body), headers);
+		return [postForItem(JSON.parse(response))];
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

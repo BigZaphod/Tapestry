@@ -7,6 +7,12 @@
 			"role": "compose"
 		},
 		{
+			"id": "send",
+			"name": "Post",
+			"icon": "paperplane",
+			"target": "draft"
+		},
+		{
 			"id": "boost",
 			"name": "Boost",
 			"icon": "tapestry.boost"

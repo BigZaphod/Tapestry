@@ -28,6 +28,8 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Changed** — [`item.actions`](#actions-set) is a `Set` of action ids; manage it with the native `item.actions.add(id)` / `item.actions.delete(id)`, replacing the old per-action value strings (`item.actions = { id: "value" }`).
   * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
   * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
+  * **Added** — composing: the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object, letting an action open a composer (for example, replying to a post). See [`performAction`](#performaction).
+  * **Added** — [`crypto.randomUUID()`](#cryptorandomuuid), the standard function for generating a random UUID string (for idempotency keys and similar).
 
 Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
 
@@ -428,6 +430,44 @@ If `votes` is left unspecified on one or more options in a `PollAttachment`, Tap
 > **Compatibility:** Requires `minimum_app_version="1.3"` or higher.
 
 ---
+### Draft
+
+A `Draft` represents something the user is composing, such as a reply. An action with the [`compose`](#action-roles) role returns a `Draft` from `performAction()` to open the composer; a *submit* action (see [`target`](#action-target)) then receives the edited `Draft` and creates the post. Create one with:
+
+```javascript
+const draft = Draft.create();
+draft.title = "Reply to @alice";
+draft.text = "@alice ";
+draft.actions.add("send");
+```
+
+#### text: String
+
+The text the user is composing. Pre-fill it (for example, a reply's mention) and read it back when submitting.
+
+#### title: String
+
+A title shown at the top of the composer, such as "Reply to @alice".
+
+#### context: Array of Item
+
+Posts to display above the composer for context — for a reply, the post being replied to. This is display only; a connector carries the actual reply references in `metadata`.
+
+#### metadata: Dictionary
+
+A `[String: String]` bag of connector state that round-trips with the draft, exactly like [`item.metadata`](#metadata-dictionary) — for example the id of the post being replied to and an idempotency key. It is not shown to the user.
+
+#### actions: Set
+
+The ids of the *submit* actions that apply to this draft (the buttons shown in the composer), managed like `item.actions` with `draft.actions.add(id)` / `draft.actions.delete(id)`. Each such action must declare `target: "draft"` in `actions.json`.
+
+#### feedback: String
+
+An optional message shown to the user when a submit is returned to the composer for a correction (see [`performAction`](#performaction)).
+
+> **Compatibility:** `Draft` requires `minimum_app_version="2.0"`.
+
+---
 ## Interface Functions
 
 The Tapestry app will call the following functions in `plugin.js` when it needs the script to read or write data. If no implementation is provided, no action will be performed. For example, some sources will not need to `verify()` themselves.
@@ -480,12 +520,12 @@ The array may also include *removals* if the connector can discover that content
 ---
 ### performAction
 
-`performAction(actionId, item, actionValue)`
+`performAction(actionId, target, actionValue)`
 
 Tapestry calls this function when an action needs to be performed by the connector.
 
   * actionId: A `String` with the action id
-  * item: the `Item` instance that the action is being requested for.
+  * target: the subject of the action, which follows the action's [`target`](#action-target) attribute — the `Item` the action was requested for (the default), or a [`Draft`](#draft) for a `target: "draft"` action. Handlers that only deal with items commonly name this parameter `item`, which is fine for that case.
   * actionValue: A compatibility hook you can usually ignore. Data for an action lives in `item.metadata`; `actionValue` carries the value stored for this action on items created by a *pre-2.0* version of the connector (before `metadata` existed), letting a connector migrating from an older version fall back to it. It is an empty string for items created by a 2.0+ connector.
 
 Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
@@ -493,6 +533,39 @@ Any data an action requires can be set in (and then read from) `item.metadata` o
 > **Note:** Only one action per feed is allowed to be running at a time.
 
 > **Compatibility:** Before 2.0, the argument order was `performAction(actionId, actionValue, item)` and the result was reported by calling `actionComplete()` rather than returned. As of 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as the compatibility hook described above. See `actions.json`.
+
+#### Composing
+
+An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer. The composer's *submit* actions declare [`target: "draft"`](#action-target), so for those `performAction`'s second argument is the edited `Draft` rather than an `Item`. A submit action then either:
+
+  * **returns the created `Item`(s)** (or nothing) — success; the composer closes.
+  * **returns a `Draft`** — sends the user back to the composer to fix something; set `draft.feedback` to explain why.
+  * **throws an `Error`** — reports a failure; the composer stays open with the draft intact.
+
+For example, a `reply` action opens a composer and a `send` action creates the post:
+
+```javascript
+async function performAction(actionId, target, actionValue) {
+    if (actionId == "reply") {
+        const item = target;   // the reply action's target is the item being replied to
+        const draft = Draft.create();
+        draft.title = "Reply to " + item.author.name;
+        draft.text = item.author.username + " ";     // pre-fill the mention
+        draft.context = [item];
+        draft.metadata = { replyTo: item.metadata.id, idempotencyKey: crypto.randomUUID() };
+        draft.actions.add("send");
+        return draft;
+    }
+    else if (actionId == "send") {
+        const draft = target;   // the send action's target is the Draft being submitted
+        const body = { status: draft.text, in_reply_to_id: draft.metadata.replyTo };
+        const headers = { "content-type": "application/json", "Idempotency-Key": draft.metadata.idempotencyKey };
+        const response = await sendRequest(`${site}/api/v1/statuses`, "POST", JSON.stringify(body), headers);
+        const post = JSON.parse(response);
+        return [ Item.createWithUriDate(post.url, new Date(post.created_at)) /* …fill in the rest… */ ];
+    }
+}
+```
 
 See the section on `actions.json` for more information on how to define and perform actions.
 
@@ -847,6 +920,15 @@ Returns a `String` that was saved in local storage. If no value was stored, `nul
 `clearItems()`
 
 All items in local storage are removed.
+
+---
+### crypto.randomUUID
+
+`crypto.randomUUID() → String`
+
+Returns a new, randomly generated UUID `String` (for example, `"9b2e5c1a-4f7d-4a2e-8c1b-0a1b2c3d4e5f"`). Useful for idempotency keys and other unique identifiers. This matches the standard browser and Node.js `crypto.randomUUID()`.
+
+> **Compatibility:** available in Tapestry 2.0 and later. A connector that uses it should set `minimum_app_version` to 2.0 so it does not load on older versions where `crypto` is unavailable.
 
 ---
 ### require
@@ -1788,6 +1870,39 @@ By default, actions have a `null` role which means they don't get any special tr
 **`"context"`**
 
 A context action is expected to return additional context about the item such as a conversation thread. To display a conversation thread, for example, return an array of `Item`s from `performAction()`. The display order is preserved (Tapestry will not re-sort these items by date). It is your responsibility to return the original item in the resulting array in the position you want it to be displayed otherwise it will not be included in the resulting timeline view. Context actions appear in the swipe menu for items in the timeline and also replace the default "Details" button. (Added in Tapestry 1.4.)
+
+**`"compose"`**
+
+A compose action returns a [`Draft`](#draft) from `performAction()` instead of items, which opens the composer — for example, a "reply" action. See [Composing](#composing) for the full flow. (Added in Tapestry 2.0.)
+
+#### Action Target
+
+An optional `target` sets what an action operates on — the object Tapestry passes to `performAction` as its second argument. (Added in Tapestry 2.0.)
+
+  * **`"item"`** — the action operates on a timeline item, which is passed to `performAction`. This is the default and can be omitted.
+  * **`"draft"`** — the action operates on a [`Draft`](#draft); `performAction` receives the `Draft`. These are the composer's *submit* actions — they appear as buttons **in the composer** (added with `draft.actions.add(id)`), not on a timeline item.
+
+A composer is usually made of **two** actions that work together — one that *opens* it and one that *submits* it — and they use different attributes, which can be confusing at first:
+
+  * The **opening** action (`reply` below) lives on a timeline item. It uses the [`compose`](#action-roles) **role** (so returning a `Draft` opens the composer) and the default `item` target. It builds the draft and adds the submit action to it with `draft.actions.add("send")`.
+  * The **submit** action (`send` below) lives in the composer, so it has no `role` (a role only matters for how an action behaves when tapped on a timeline item). What makes it a submit action is its `target: "draft"`.
+
+```json
+{
+    "id": "reply",
+    "name": "Reply",
+    "icon": "arrow.turn.up.left",
+    "role": "compose"
+},
+{
+    "id": "send",
+    "name": "Post",
+    "icon": "paperplane",
+    "target": "draft"
+}
+```
+
+See [Composing](#composing) for the matching `performAction` implementation.
 
 #### Action Presentation
 
