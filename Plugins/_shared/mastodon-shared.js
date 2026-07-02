@@ -155,6 +155,7 @@ function postForItem(item) {
 	// original post above), and "userId" is the authenticated account stored during verify/load.
 	const myUserId = getItem("userId");
 	if (myUserId != null && account?.id == myUserId) {
+		post.metadata.isSelf = "true";
 		post.actions.add("delete");
 	}
 
@@ -342,7 +343,9 @@ async function performAction(actionId, target, actionValue) {
 		const draft = Draft.create();
 		const mention = target.author?.username;   // "@user@domain", or undefined
 		draft.title = "Reply to " + (target.author?.name ?? mention ?? "post");
-		draft.text = mention ? mention + " " : "";
+		// Prefill the mention so the person replied-to is notified — but not on a self-reply (you don't @ yourself).
+		const isSelf = target.metadata?.isSelf === "true";
+		draft.text = (isSelf || mention == null) ? "" : mention + " ";
 		draft.context = [target];
 		draft.metadata = { replyTo: id, idempotencyKey: crypto.randomUUID() };
 		draft.actions.add("send");
