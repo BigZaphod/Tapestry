@@ -109,7 +109,6 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         // Only your own posts can be deleted. "didSelf" is the authenticated account's DID, stored at login.
         const didSelf = getItem("didSelf");
         if (didSelf != null && author.did == didSelf) {
-            metadata.isSelf = "true";
             actions.push("delete");
         }
     }
@@ -801,13 +800,11 @@ async function performAction(actionId, target, actionValue) {
 	}
 	else if (actionId == "reply") {
 		// Open a composer for a reply. The reply refs (root + parent) and a client-chosen rkey ride in the draft's
-		// metadata; the mention is prefilled so the person replied-to gets tagged (via a facet built at send).
+		// metadata. No mention prefill: a Bluesky reply notifies the parent via the reply ref, matching the official
+		// client — the user can still @-mention anyone and it's turned into a facet at send. Draft opens with "".
 		const draft = Draft.create();
 		const author = target.author;
 		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");
-		// Prefill the mention (facet built at send) — but not on a self-reply (you don't @ yourself).
-		const isSelf = metadata.isSelf === "true";
-		draft.text = (isSelf || author?.username == null) ? "" : author.username + " ";
 		draft.context = [target];
 		draft.metadata = {
 			parentUri: metadata.uri, parentCid: metadata.cid,
