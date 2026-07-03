@@ -276,20 +276,16 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-// Build a fresh compose draft. `reply` seeds the parent — the mention is prefilled so the person replied-to is
-// notified (Mastodon won't add it for us) and the `in_reply_to_id` ref rides the metadata; `newPost` starts blank.
-// Both mint an idempotency key up front and submit through the same `send` verb.
-function composeDraft(actionId, target, id) {
+// Build a fresh compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata);
+// `newPost` starts blank. Both mint an idempotency key up front and submit through the same `send` verb.
+async function composeDraft(actionId, target, id) {
 	const draft = Draft.create();
 	draft.metadata = { idempotencyKey: crypto.randomUUID() };
 	draft.actions.add("send");
 
 	if (actionId == "reply") {
-		const mention = target.author?.username;   // "@user@domain", or undefined
-		const isSelf = target.metadata?.isSelf === "true";
-		draft.title = "Reply to " + (target.author?.name ?? mention ?? "post");
-		// Skip the mention prefill on a self-reply — you don't @ yourself.
-		draft.text = (isSelf || mention == null) ? "" : mention + " ";
+		draft.title = "Reply to " + (target.author?.name ?? target.author?.username ?? "post");
+		draft.text = await replyMentionPrefill(id);
 		draft.context = [target];
 		draft.metadata.replyTo = id;
 	} else {
@@ -297,6 +293,27 @@ function composeDraft(actionId, target, id) {
 	}
 
 	return draft;
+}
+
+// The @-mentions to prefill into a reply: the post's author plus everyone it mentions (the Mastodon convention is
+// to keep the whole thread in the loop), minus yourself, deduped. Fetched fresh from the status so an edited
+// mention list is current — the composer already shows a loading state while this runs, and a future context view
+// can extend this same lookup. The fetch is load-bearing: if it fails, the error propagates and cancels the reply.
+// That deliberately covers the deleted-post case — better to fail than open a composer to reply to a post that's
+// gone (a cached-author fallback would silently mask it). Returns a trailing-spaced string, or "".
+async function replyMentionPrefill(id) {
+	const myUserId = getItem("userId");
+	const status = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}`));
+	const participants = [status.account, ...(status.mentions ?? [])];
+	const seen = new Set();
+	const tokens = [];
+	for (const person of participants) {
+		if (person?.acct == null || seen.has(person.acct)) { continue; }
+		if (myUserId != null && person.id == myUserId) { continue; }
+		seen.add(person.acct);
+		tokens.push("@" + person.acct);
+	}
+	return tokens.length > 0 ? tokens.join(" ") + " " : "";
 }
 
 async function performAction(actionId, target, actionValue) {
