@@ -276,11 +276,35 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
+// Build a fresh compose draft. `reply` seeds the parent — the mention is prefilled so the person replied-to is
+// notified (Mastodon won't add it for us) and the `in_reply_to_id` ref rides the metadata; `newPost` starts blank.
+// Both mint an idempotency key up front and submit through the same `send` verb.
+function composeDraft(actionId, target, id) {
+	const draft = Draft.create();
+	draft.metadata = { idempotencyKey: crypto.randomUUID() };
+	draft.actions.add("send");
+
+	if (actionId == "reply") {
+		const mention = target.author?.username;   // "@user@domain", or undefined
+		const isSelf = target.metadata?.isSelf === "true";
+		draft.title = "Reply to " + (target.author?.name ?? mention ?? "post");
+		// Skip the mention prefill on a self-reply — you don't @ yourself.
+		draft.text = (isSelf || mention == null) ? "" : mention + " ";
+		draft.context = [target];
+		draft.metadata.replyTo = id;
+	} else {
+		draft.title = "New Post";
+	}
+
+	return draft;
+}
+
 async function performAction(actionId, target, actionValue) {
 	// 2.0 stores the status id on the item's metadata; older items stored it as the
 	// action's value. Fall back for those. Removable a few months after 2.0
 	// ships publicly, once pre-2.0 items have expired out of catalogs.
-	const id = target.metadata?.id ?? actionValue;
+	// `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
+	const id = target?.metadata?.id ?? actionValue;
 
 	if (actionId == "favorite") {
 		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
@@ -337,19 +361,8 @@ async function performAction(actionId, target, actionValue) {
 		await sendRequest(`${site}/api/v1/statuses/${id}`, "DELETE");
 		return [Item.delete(target.uri)];
 	}
-	else if (actionId == "reply") {
-		// Open a composer for a reply. Threading rides `in_reply_to_id` (kept in the draft's metadata); the
-		// mention is prefilled into the text so the person replied-to is notified (Mastodon won't add it for us).
-		const draft = Draft.create();
-		const mention = target.author?.username;   // "@user@domain", or undefined
-		draft.title = "Reply to " + (target.author?.name ?? mention ?? "post");
-		// Prefill the mention so the person replied-to is notified — but not on a self-reply (you don't @ yourself).
-		const isSelf = target.metadata?.isSelf === "true";
-		draft.text = (isSelf || mention == null) ? "" : mention + " ";
-		draft.context = [target];
-		draft.metadata = { replyTo: id, idempotencyKey: crypto.randomUUID() };
-		draft.actions.add("send");
-		return draft;
+	else if (actionId == "reply" || actionId == "newPost") {
+		return composeDraft(actionId, target, id);
 	}
 	else if (actionId == "send") {
 		// Here `target` is the DRAFT (a target:"draft" action). Create the status and return the new item; it

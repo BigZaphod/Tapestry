@@ -616,12 +616,37 @@ async function buildFacets(text) {
 	return facets;
 }
 
+// Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
+// no mention prefill — a Bluesky reply notifies the parent via the ref (matching the official client), and any
+// @-mention the user types becomes a facet at send. `newPost` starts blank. Both carry a client-chosen `rkey` for
+// idempotency and submit through the same `send` verb.
+function composeDraft(actionId, target, metadata) {
+	const draft = Draft.create();
+	draft.metadata = { rkey: nextTid() };
+	draft.actions.add("send");
+
+	if (actionId == "reply") {
+		const author = target.author;
+		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");
+		draft.context = [target];
+		draft.metadata.parentUri = metadata.uri;
+		draft.metadata.parentCid = metadata.cid;
+		draft.metadata.rootUri = metadata.rootUri ?? metadata.uri;
+		draft.metadata.rootCid = metadata.rootCid ?? metadata.cid;
+	} else {
+		draft.title = "New Post";
+	}
+
+	return draft;
+}
+
 async function performAction(actionId, target, actionValue) {
 	// 2.0 stores the post's uri/cid/rkey in item.metadata; older items stored
 	// them as a JSON string under the action's value. Fall back for those.
 	// Removable a few months after 2.0 ships publicly, once pre-2.0 items have
 	// expired out of catalogs.
-	let metadata = target.metadata;
+	// `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
+	let metadata = target?.metadata;
 	if (metadata == null) {
 		const legacy = actionValue;
 		if (legacy != null) {
@@ -798,21 +823,8 @@ async function performAction(actionId, target, actionValue) {
 		await sendRequest(url, "POST", parameters, extraHeaders);
 		return [Item.delete(target.uri)];
 	}
-	else if (actionId == "reply") {
-		// Open a composer for a reply. The reply refs (root + parent) and a client-chosen rkey ride in the draft's
-		// metadata. No mention prefill: a Bluesky reply notifies the parent via the reply ref, matching the official
-		// client — the user can still @-mention anyone and it's turned into a facet at send. Draft opens with "".
-		const draft = Draft.create();
-		const author = target.author;
-		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");
-		draft.context = [target];
-		draft.metadata = {
-			parentUri: metadata.uri, parentCid: metadata.cid,
-			rootUri: metadata.rootUri ?? metadata.uri, rootCid: metadata.rootCid ?? metadata.cid,
-			rkey: nextTid(),
-		};
-		draft.actions.add("send");
-		return draft;
+	else if (actionId == "reply" || actionId == "newPost") {
+		return composeDraft(actionId, target, metadata);
 	}
 	else if (actionId == "send") {
 		// Here `target` is the DRAFT. Create the post; the reply threads on the server and the timeline/thread

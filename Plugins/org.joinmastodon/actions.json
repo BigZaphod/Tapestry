@@ -13,6 +13,13 @@
 			"target": "draft"
 		},
 		{
+			"id": "newPost",
+			"name": "New Post",
+			"icon": "square.and.pencil",
+			"role": "compose",
+			"target": "feed"
+		},
+		{
 			"id": "boost",
 			"name": "Boost",
 			"icon": "tapestry.boost"
