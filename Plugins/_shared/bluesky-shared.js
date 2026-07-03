@@ -625,6 +625,18 @@ function composeDraft(actionId, target, metadata) {
 	draft.metadata = { rkey: nextTid() };
 	draft.actions.add("send");
 
+	// Bluesky posts are limited to BOTH 300 graphemes and 3000 UTF-8 bytes (the `app.bsky.feed.post` lexicon caps
+	// text at maxGraphemes:300 / maxLength:3000). The byte cap can bind first on emoji-heavy text. No weighting:
+	// URLs and mentions count as their literal typed length — we post the text verbatim, matching what the server
+	// counts (unlike the official app, which shortens URLs in its own counter and so disagrees with the server).
+	draft.rules = {
+		text: {
+			countUnit: "graphemes",
+			maxLength: 300,
+			maxBytes: 3000
+		}
+	};
+
 	if (actionId == "reply") {
 		const author = target.author;
 		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");

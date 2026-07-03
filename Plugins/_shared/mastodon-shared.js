@@ -276,12 +276,57 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
+// The cached `/api/v2/instance` record. This endpoint is the instance's capability sheet — status limits (the
+// character counter), media limits + supported types + alt-text length (attachments), poll limits, available
+// languages, and more — so we cache the WHOLE record once and read fields from it as each feature needs them,
+// rather than re-fetching per field. It's a PUBLIC endpoint, so this works for the unauthenticated variants too.
+// Soft 1-week TTL (it changes rarely); on failure returns the last good cache, else null so callers can default.
+// A stale or missing record must never block composing.
+async function getInstance() {
+	const TTL = 7 * 24 * 60 * 60 * 1000;   // one week
+	const cached = getItem("instance");
+	const stored = cached != null ? JSON.parse(cached) : null;
+	if (stored != null && Date.now() - stored.fetchedAt < TTL) {
+		return stored.record;   // still fresh — no fetch
+	}
+
+	try {
+		const record = JSON.parse(await sendRequest(`${site}/api/v2/instance`));
+		setItem("instance", JSON.stringify({ fetchedAt: Date.now(), record }));
+		return record;
+	} catch (error) {
+		console.log(`getInstance fetch failed, using ${stored != null ? "stale cache" : "defaults"}: ${error}`);
+		return stored?.record ?? null;
+	}
+}
+
 // Build a fresh compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata);
 // `newPost` starts blank. Both mint an idempotency key up front and submit through the same `send` verb.
 async function composeDraft(actionId, target, id) {
 	const draft = Draft.create();
 	draft.metadata = { idempotencyKey: crypto.randomUUID() };
 	draft.actions.add("send");
+
+	// How the app counts characters, matching the server: the instance's own max, every URL weighed the way the
+	// server does, and a mention counting only its "@user" (the @domain is free). Per-instance values come from the
+	// cached instance record; the defaults cover a failed fetch or a server predating /api/v2.
+	const statuses = (await getInstance())?.configuration?.statuses;
+	draft.rules = {
+		text: {
+			countUnit: "graphemes",
+			maxLength: statuses?.max_characters ?? 500,
+			weights: {
+				// URL → the reserved weight (23). The trailing class stops the match before sentence punctuation so
+				// that punctuation counts naturally, matching the server (twitter-text's URL regex) and erring toward
+				// NOT swallowing real text (an over-long match would undercount).
+				"https?://[^\\s]*[^\\s.,;:!?)\\]}]": statuses?.characters_reserved_per_url ?? 23,
+				// Mention → "@user", the @domain free ($1 is the "@user" part). The lookbehind mirrors the server's
+				// MENTION_RE: an @ glued to a preceding word char (or = or /) is NOT a mention; a username may carry
+				// internal dots/hyphens.
+				"(?<![=/\\w])(@\\w+(?:[.-]+\\w+)*)(?:@[\\w.-]+)?": "$1"
+			}
+		}
+	};
 
 	if (actionId == "reply") {
 		draft.title = "Reply to " + (target.author?.name ?? target.author?.username ?? "post");
