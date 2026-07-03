@@ -29,6 +29,7 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
   * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
   * **Added** — composing: the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object, letting an action open a composer (for example, replying to a post). See [`performAction`](#performaction).
+  * **Added** — a live character counter for the composer, declared per-draft with [`draft.rules`](#rules-object) (`rules.text`).
   * **Added** — [`crypto.randomUUID()`](#cryptorandomuuid), the standard function for generating a random UUID string (for idempotency keys and similar).
   * **Added** — standard web utilities JavaScriptCore doesn't provide: [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes) and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
@@ -465,6 +466,35 @@ The ids of the *submit* actions that apply to this draft (the buttons shown in t
 #### feedback: String
 
 An optional message shown to the user when a submit is returned to the composer for a correction (see [`performAction`](#performaction)).
+
+#### rules: Object
+
+Connector-declared rules that tell the composer how to behave for this draft. Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
+
+##### rules.text — character counting
+
+Describes how the service measures a post's length, so the composer can show an accurate live character counter. The count is evaluated entirely in the app — the draft is never sent back to the connector to be measured — so you *declare* the weighting rather than compute it. Omit `rules.text` for a service with no length limit, and no counter is shown.
+
+```javascript
+draft.rules = {
+    text: {
+        countUnit: "graphemes",   // "graphemes" | "codepoints" | "utf16"
+        maxLength: 500,           // the limit, in countUnit
+        // maxBytes: 3000,        // optional second limit on UTF-8 byte length (e.g. Bluesky)
+        weights: {
+            "https?://[^\\s]+": 23,          // every URL counts as 23
+            "(@\\w+)(@[\\w.-]+)?": "$1"      // a mention counts only "@user" — the @domain is free
+        }
+    }
+};
+```
+
+  * **countUnit** — how ordinary text is measured: `"graphemes"` (user-perceived characters, so a multi-codepoint emoji counts as one), `"codepoints"` (Unicode scalars), or `"utf16"` (UTF-16 code units). Most modern services count graphemes.
+  * **maxLength** — the limit, expressed in `countUnit`. Required whenever `text` is present.
+  * **maxBytes** — an optional second limit on the text's raw UTF-8 byte length, enforced *alongside* `maxLength`. Bluesky, for example, caps a post at both 300 graphemes and 3000 bytes, and the byte limit can be reached first on emoji-heavy text. Omit it if the service has no byte limit.
+  * **weights** — an optional object mapping a regular expression to the count its matches contribute *instead* of their normal length. The value is either a number (a fixed cost — for example a URL that always counts as 23) or the string `"$N"` (the length of capture group *N* — for example counting only the `@user` part of a mention while its domain is free). Text not matched by any pattern counts normally. Where two patterns could match the same span the leftmost match wins (the longer one on a tie), so the result never depends on the order you list them.
+
+Declare weights that mirror how the service actually counts (Mastodon, for instance, reserves 23 characters for every URL and ignores a mention's domain).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
