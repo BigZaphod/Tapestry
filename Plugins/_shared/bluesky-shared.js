@@ -105,6 +105,9 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         else {
             actions.push("repost");
         }
+        // Bluesky always supports quoting (the target post's own postgate may still reject it — the server enforces
+        // that at send, surfaced as an error). Grouped with repost/unrepost so they share one cell button.
+        actions.push("quote");
         if (item.post.viewer?.bookmarked != null) {
             actions.push(item.post.viewer?.bookmarked == false ? "save" : "unsave");
         }
@@ -647,6 +650,14 @@ function composeDraft(actionId, target, metadata) {
 		draft.metadata.rootUri = metadata.rootUri ?? metadata.uri;
 		draft.metadata.rootCid = metadata.rootCid ?? metadata.cid;
 		if (metadata.language != null) { draft.attributeValues.language = metadata.language; }
+	} else if (actionId == "quote") {
+		// A quote is a top-level post embedding another. The full item rides `attachments` for the composer preview
+		// (and to keep it live); the strong ref used to build the embed at send rides `metadata`, like a reply ref.
+		const author = target.author;
+		draft.header = "Quote " + (author?.name ?? author?.username ?? "post");
+		draft.attachments = [target];
+		draft.metadata.quoteUri = metadata.uri;
+		draft.metadata.quoteCid = metadata.cid;
 	} else {
 		draft.header = "New Post";
 	}
@@ -909,7 +920,7 @@ async function performAction(actionId, target, actionValue) {
 		await sendRequest(url, "POST", parameters, extraHeaders);
 		return [Item.delete(target.uri)];
 	}
-	else if (actionId == "reply" || actionId == "newPost") {
+	else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
 		return composeDraft(actionId, target, metadata);
 	}
 	else if (actionId == "send") {
@@ -928,6 +939,12 @@ async function performAction(actionId, target, actionValue) {
 			record.reply = {
 				root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
 				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
+			};
+		}
+		if (draft.metadata.quoteUri != null) {
+			record.embed = {
+				"$type": "app.bsky.embed.record",
+				record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid },
 			};
 		}
 		const facets = await buildFacets(draft.body);

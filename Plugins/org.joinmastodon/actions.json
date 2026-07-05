@@ -22,12 +22,21 @@
 		{
 			"id": "boost",
 			"name": "Boost",
-			"icon": "tapestry.boost"
+			"icon": "tapestry.boost",
+			"group": "boost"
 		},
 		{
 			"id": "unboost",
 			"name": "Remove Boost",
-			"icon": "tapestry.boost.fill"
+			"icon": "tapestry.boost.fill",
+			"group": "boost"
+		},
+		{
+			"id": "quote",
+			"name": "Quote",
+			"icon": "quote.bubble",
+			"role": "compose",
+			"group": "boost"
 		},
 		{
 			"id": "favorite",

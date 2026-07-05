@@ -152,6 +152,10 @@ function postForItem(item) {
 
 	post.actions.add(item?.favourited ? "unfavorite" : "favorite");
 	post.actions.add(item?.reblogged ? "unboost" : "boost");
+	// Quote only where the instance supports it (Mastodon 4.5+ / API v7 — resolved once per load into `quoteCapable`).
+	// The quoted post's own quote-approval policy may still reject the quote at send — the server enforces that,
+	// surfaced as an error. Grouped with boost/unboost in actions.json so they share one cell button.
+	if (quoteCapable) { post.actions.add("quote"); }
 	post.actions.add(item?.bookmarked ? "unbookmark" : "bookmark");
 	post.actions.add(item?.replies_count > 0 ? "replies" : "thread");
 
@@ -303,6 +307,17 @@ async function getInstance() {
 	}
 }
 
+// Whether the current (authenticated) instance can author quote posts (Mastodon 4.5+ / API v7). Resolved ONCE per
+// load (see load) and cached module-side so every postForItem path — home/mentions/statuses, the thread action, and
+// the just-posted item — offers the quote action consistently, without threading a flag through each call site. A
+// plain module global earns its keep here: it defaults false (no quote), and load always runs before any item can be
+// acted on, so the natural flow keeps it correct. `supportsQuotePosts` stays a pure check on the instance record.
+let quoteCapable = false;
+
+function supportsQuotePosts(instance) {
+	return (instance?.api_versions?.mastodon ?? 0) >= 7;
+}
+
 // Build a fresh compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata);
 // `newPost` starts blank. Both mint an idempotency key up front and submit through the same `send` verb.
 async function composeDraft(actionId, target, id) {
@@ -313,7 +328,9 @@ async function composeDraft(actionId, target, id) {
 	// How the app counts characters, matching the server: the instance's own max, every URL weighed the way the
 	// server does, and a mention counting only its "@user" (the @domain is free). Per-instance values come from the
 	// cached instance record; the defaults cover a failed fetch or a server predating /api/v2.
-	const statuses = (await getInstance())?.configuration?.statuses;
+	const instance = await getInstance();
+	const statuses = instance?.configuration?.statuses;
+	const canQuote = supportsQuotePosts(instance);
 	draft.rules = {
 		characterUnit: "graphemes",
 		// The main counter's limit (default 500) spans the body AND the content warning — both count against it.
@@ -334,7 +351,7 @@ async function composeDraft(actionId, target, id) {
 			},
 			contentWarning: { availability: "hidden" }   // starts hidden; the user reveals it to add a warning
 		},
-		attributes: composeAttributes()
+		attributes: composeAttributes(canQuote)
 	};
 
 	if (actionId == "reply") {
@@ -345,6 +362,12 @@ async function composeDraft(actionId, target, id) {
 		// Inherit the parent's visibility/language where the item carried them (best-effort).
 		if (target?.metadata?.visibility != null) { draft.attributeValues.visibility = target.metadata.visibility; }
 		if (target?.metadata?.language != null) { draft.attributeValues.language = target.metadata.language; }
+	} else if (actionId == "quote") {
+		// A quote is a new top-level post embedding another. The full item rides `attachments` for the composer
+		// preview; the status id used to build the quote at send rides `metadata`, like the reply ref.
+		draft.header = "Quote " + (target.author?.name ?? target.author?.username ?? "post");
+		draft.attachments = [target];
+		draft.metadata.quotedId = id;
 	} else {
 		draft.header = "New Post";
 	}
@@ -353,11 +376,12 @@ async function composeDraft(actionId, target, id) {
 }
 
 // The composer controls Mastodon offers: visibility, an optional content warning (which also marks the post
-// sensitive), post language, and who may quote the post. The app renders these and writes the chosen values onto
-// draft.attributeValues; `send` reads them back. quotePolicy is only meaningful for public/unlisted posts — the
-// server forces private/direct posts to "nobody" — which the `availableWhen` expresses (and `send` re-guards).
-function composeAttributes() {
-	return [
+// sensitive), post language, and — only on quote-capable instances (4.5+ / API v7) — who may quote the post. The app
+// renders these and writes the chosen values onto draft.attributeValues; `send` reads them back. quotePolicy is only
+// meaningful for public/unlisted posts — the server forces private/direct posts to "nobody" — which the
+// `availableWhen` expresses (and `send` re-guards).
+function composeAttributes(canQuote) {
+	const attributes = [
 		{
 			name: "visibility", prompt: "Visibility", defaultValue: "public",
 			choices: [
@@ -366,8 +390,11 @@ function composeAttributes() {
 				{ value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" },
 				{ value: "direct", prompt: "Private mention", description: "Everyone mentioned in the post", icon: "at" }
 			]
-		},
-		{
+		}
+	];
+	// "Who can quote" is meaningful only where the server understands quotes (Mastodon 4.5+ / API v7); omit it elsewhere.
+	if (canQuote) {
+		attributes.push({
 			name: "quotePolicy", prompt: "Who can quote", defaultValue: "public",
 			availableWhen: { attribute: "visibility", oneOf: ["public", "unlisted"] },
 			choices: [
@@ -375,10 +402,10 @@ function composeAttributes() {
 				{ value: "followers", prompt: "Followers", icon: "person.2" },
 				{ value: "nobody", prompt: "Just me", icon: "nosign" }
 			]
-			// TODO: only offer this on quote-capable instances (Mastodon 4.5+, API v7); harmless meanwhile (older servers ignore it).
-		},
-		{ name: "language", type: "language" }
-	];
+		});
+	}
+	attributes.push({ name: "language", type: "language" });
+	return attributes;
 }
 
 // The @-mentions to prefill into a reply: the post's author plus everyone it mentions (the Mastodon convention is
@@ -448,6 +475,9 @@ async function performAction(actionId, target, actionValue) {
 		return target;
 	}
 	else if (actionId == "thread" || actionId == "replies") {
+		// Thread posts are quotable too — resolve the capability here so quote appears in a thread view even if this
+		// context hasn't run load() (postForItem reads `quoteCapable`). getInstance() is cached, so this is cheap.
+		quoteCapable = supportsQuotePosts(await getInstance());
 		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}/context`));
 		let results = [];
 		// `item` here is a raw Mastodon status from the API (as postForItem expects); `target` is our Item.
@@ -464,7 +494,7 @@ async function performAction(actionId, target, actionValue) {
 		await sendRequest(`${site}/api/v1/statuses/${id}`, "DELETE");
 		return [Item.delete(target.uri)];
 	}
-	else if (actionId == "reply" || actionId == "newPost") {
+	else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
 		return composeDraft(actionId, target, id);
 	}
 	else if (actionId == "send") {
@@ -478,6 +508,7 @@ async function performAction(actionId, target, actionValue) {
 		const body = {
 			status: draft.body,
 			in_reply_to_id: draft.metadata?.replyTo,
+			quoted_status_id: draft.metadata?.quotedId,
 			visibility: visibility,
 			language: attributes.language,
 			spoiler_text: hasContentWarning ? contentWarning : undefined,

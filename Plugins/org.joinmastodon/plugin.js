@@ -38,6 +38,11 @@ async function fetchFollowedTags() {
 }
 
 async function load() {
+	// Resolve once, up front: whether this (authenticated) instance supports authoring quote posts (Mastodon 4.5+ /
+	// API v7), into the module-level `quoteCapable` that postForItem reads. getInstance() is cached for a week, so
+	// this is a no-op fetch after the first.
+	quoteCapable = supportsQuotePosts(await getInstance());
+
 	// NOTE: The home timeline will be filled up to the endDate, if possible.
 	let endDate = null;
 	let endDateTimestamp = getItem("endDateTimestamp");

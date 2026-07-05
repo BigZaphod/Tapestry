@@ -22,12 +22,21 @@
 		{
 			"id": "repost",
 			"name": "Repost",
-			"icon": "tapestry.boost"
+			"icon": "tapestry.boost",
+			"group": "repost"
 		},
 		{
 			"id": "unrepost",
 			"name": "Remove Repost",
-			"icon": "tapestry.boost.fill"
+			"icon": "tapestry.boost.fill",
+			"group": "repost"
+		},
+		{
+			"id": "quote",
+			"name": "Quote",
+			"icon": "quote.bubble",
+			"role": "compose",
+			"group": "repost"
 		},
 		{
 			"id": "like",
