@@ -142,7 +142,11 @@ function postForItem(item) {
 
 	post.shortcodes = shortcodes;
 
-	post.metadata = { id: item.id };
+	// Carry the post's visibility and language so a reply can default to them (Mastodon doesn't inherit either
+	// server-side — the composer replicates the web client: default a reply to the parent's visibility, never wider,
+	// and prefill its language). `item` here is the displayed post (a boost was already unwrapped above).
+	post.metadata = { id: item.id, visibility: item["visibility"] ?? "public" };
+	if (item["language"] != null) { post.metadata.language = item["language"]; }
 
 	post.actions.add("reply");
 
@@ -155,7 +159,6 @@ function postForItem(item) {
 	// original post above), and "userId" is the authenticated account stored during verify/load.
 	const myUserId = getItem("userId");
 	if (myUserId != null && account?.id == myUserId) {
-		post.metadata.isSelf = "true";
 		post.actions.add("delete");
 	}
 
@@ -312,32 +315,70 @@ async function composeDraft(actionId, target, id) {
 	// cached instance record; the defaults cover a failed fetch or a server predating /api/v2.
 	const statuses = (await getInstance())?.configuration?.statuses;
 	draft.rules = {
-		text: {
-			countUnit: "graphemes",
-			maxLength: statuses?.max_characters ?? 500,
-			weights: {
-				// URL → the reserved weight (23). The trailing class stops the match before sentence punctuation so
-				// that punctuation counts naturally, matching the server (twitter-text's URL regex) and erring toward
-				// NOT swallowing real text (an over-long match would undercount).
-				"https?://[^\\s]*[^\\s.,;:!?)\\]}]": statuses?.characters_reserved_per_url ?? 23,
-				// Mention → "@user", the @domain free ($1 is the "@user" part). The lookbehind mirrors the server's
-				// MENTION_RE: an @ glued to a preceding word char (or = or /) is NOT a mention; a username may carry
-				// internal dots/hyphens.
-				"(?<![=/\\w])(@\\w+(?:[.-]+\\w+)*)(?:@[\\w.-]+)?": "$1"
-			}
-		}
+		characterUnit: "graphemes",
+		// The main counter's limit (default 500) spans the body AND the content warning — both count against it.
+		characterCounter: { fields: ["body", "contentWarning"], characterLimit: { maxLength: statuses?.max_characters ?? 500 } },
+		fields: {
+			// The body is weighted; the content warning is a plain optional field (its URLs/mentions are NOT weighted).
+			body: {
+				placeholder: actionId == "reply" ? "Post your reply" : "What's on your mind?",
+				weights: {
+					// URL → the reserved weight (23). The trailing class stops the match before sentence punctuation so
+					// it counts naturally, matching the server (twitter-text's URL regex) and erring toward NOT
+					// swallowing real text (an over-long match would undercount).
+					"https?://[^\\s]*[^\\s.,;:!?)\\]}]": statuses?.characters_reserved_per_url ?? 23,
+					// Mention → "@user", the @domain free ($1 is the "@user" part). The lookbehind mirrors the server's
+					// MENTION_RE: an @ glued to a preceding word char (or = or /) is NOT a mention.
+					"(?<![=/\\w])(@\\w+(?:[.-]+\\w+)*)(?:@[\\w.-]+)?": "$1"
+				}
+			},
+			contentWarning: { availability: "hidden" }   // starts hidden; the user reveals it to add a warning
+		},
+		attributes: composeAttributes()
 	};
 
 	if (actionId == "reply") {
-		draft.title = "Reply to " + (target.author?.name ?? target.author?.username ?? "post");
-		draft.text = await replyMentionPrefill(id);
+		draft.header = "Reply to " + (target.author?.name ?? target.author?.username ?? "post");
+		draft.body = await replyMentionPrefill(id);
 		draft.context = [target];
 		draft.metadata.replyTo = id;
+		// Inherit the parent's visibility/language where the item carried them (best-effort).
+		if (target?.metadata?.visibility != null) { draft.attributeValues.visibility = target.metadata.visibility; }
+		if (target?.metadata?.language != null) { draft.attributeValues.language = target.metadata.language; }
 	} else {
-		draft.title = "New Post";
+		draft.header = "New Post";
 	}
 
 	return draft;
+}
+
+// The composer controls Mastodon offers: visibility, an optional content warning (which also marks the post
+// sensitive), post language, and who may quote the post. The app renders these and writes the chosen values onto
+// draft.attributeValues; `send` reads them back. quotePolicy is only meaningful for public/unlisted posts — the
+// server forces private/direct posts to "nobody" — which the `availableWhen` expresses (and `send` re-guards).
+function composeAttributes() {
+	return [
+		{
+			name: "visibility", prompt: "Visibility", defaultValue: "public",
+			choices: [
+				{ value: "public", prompt: "Public", description: "Anyone on and off Mastodon", icon: "globe" },
+				{ value: "unlisted", prompt: "Quiet public", description: "Hidden from Mastodon search results, trending, and public timelines", icon: "moon" },
+				{ value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" },
+				{ value: "direct", prompt: "Private mention", description: "Everyone mentioned in the post", icon: "at" }
+			]
+		},
+		{
+			name: "quotePolicy", prompt: "Who can quote", defaultValue: "public",
+			availableWhen: { attribute: "visibility", oneOf: ["public", "unlisted"] },
+			choices: [
+				{ value: "public", prompt: "Anyone", icon: "quote.bubble" },
+				{ value: "followers", prompt: "Followers", icon: "person.2" },
+				{ value: "nobody", prompt: "Just me", icon: "nosign" }
+			]
+			// TODO: only offer this on quote-capable instances (Mastodon 4.5+, API v7); harmless meanwhile (older servers ignore it).
+		},
+		{ name: "language", type: "language" }
+	];
 }
 
 // The @-mentions to prefill into a reply: the post's author plus everyone it mentions (the Mastodon convention is
@@ -430,7 +471,20 @@ async function performAction(actionId, target, actionValue) {
 		// Here `target` is the DRAFT (a target:"draft" action). Create the status and return the new item; it
 		// lands in the timeline on the next refresh.
 		const draft = target;
-		const body = { status: draft.text, in_reply_to_id: draft.metadata?.replyTo };
+		const attributes = draft.attributeValues ?? {};
+		const contentWarning = draft.contentWarning;   // a first-class content field, not an attribute
+		const hasContentWarning = contentWarning != null && contentWarning.length > 0;
+		const visibility = attributes.visibility;
+		const body = {
+			status: draft.body,
+			in_reply_to_id: draft.metadata?.replyTo,
+			visibility: visibility,
+			language: attributes.language,
+			spoiler_text: hasContentWarning ? contentWarning : undefined,
+			sensitive: hasContentWarning ? true : undefined,
+			// The server ignores the quote policy for followers-only/direct posts, so only send it when it applies.
+			quote_approval_policy: (visibility == null || visibility == "public" || visibility == "unlisted") ? attributes.quotePolicy : undefined
+		};
 		const headers = {
 			"content-type": "application/json",
 			"Idempotency-Key": draft.metadata?.idempotencyKey ?? crypto.randomUUID(),
