@@ -86,6 +86,8 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         metadata.rootUri = item.post.uri;
         metadata.rootCid = item.post.cid;
     }
+    // Carry the post's primary language so a reply can prefill it (the server won't inherit it).
+    if (item.post.record?.langs?.[0] != null) { metadata.language = item.post.record.langs[0]; }
     let actions = [];
     if (includeActions) {
         actions.push("reply");
@@ -630,26 +632,98 @@ function composeDraft(actionId, target, metadata) {
 	// URLs and mentions count as their literal typed length — we post the text verbatim, matching what the server
 	// counts (unlike the official app, which shortens URLs in its own counter and so disagrees with the server).
 	draft.rules = {
-		text: {
-			countUnit: "graphemes",
-			maxLength: 300,
-			maxBytes: 3000
-		}
+		characterUnit: "graphemes",
+		characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
+		fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
+		attributes: composeAttributes(actionId == "reply")
 	};
 
 	if (actionId == "reply") {
 		const author = target.author;
-		draft.title = "Reply to " + (author?.name ?? author?.username ?? "post");
+		draft.header = "Reply to " + (author?.name ?? author?.username ?? "post");
 		draft.context = [target];
 		draft.metadata.parentUri = metadata.uri;
 		draft.metadata.parentCid = metadata.cid;
 		draft.metadata.rootUri = metadata.rootUri ?? metadata.uri;
 		draft.metadata.rootCid = metadata.rootCid ?? metadata.cid;
+		if (metadata.language != null) { draft.attributeValues.language = metadata.language; }
 	} else {
-		draft.title = "New Post";
+		draft.header = "New Post";
 	}
 
 	return draft;
+}
+
+// Bluesky's composer settings: who may reply (threadgate), whether the post can be quoted (postgate), and the post
+// language. Reply audience is one multi-select mirroring Bluesky's own model — "Everybody" (no threadgate) and
+// "Nobody" (empty allow list) are mutually exclusive with each other and with the relationship groups, which combine.
+// It's written as a threadgate sidecar at `send`. Quotes are allowed by default; turning that off writes a postgate.
+//
+// A threadgate is structurally root-only in atproto (its rkey must equal the thread root's), so reply audience can't
+// be set on a reply — that attribute is offered only on top-level posts.
+function composeAttributes(isReply) {
+	const attributes = [];
+	if (!isReply) {
+		attributes.push({
+			name: "replyAudience",
+			prompt: "Who can reply",
+			type: "multiple",
+			defaultValue: "everybody",
+			requireSelection: true,
+			icon: "bubble.left.and.bubble.right",
+			description: "Everybody can reply by default. Choose “Nobody”, or combine groups to limit who can reply.",
+			choices: [
+				{ value: "everybody", prompt: "Everybody", exclusive: true },
+				{ value: "nobody", prompt: "Nobody", exclusive: true },
+				{ value: "mentioned", prompt: "Mentioned users" },
+				{ value: "following", prompt: "People you follow" },
+				{ value: "followers", prompt: "Your followers" }
+			]
+		});
+	}
+	attributes.push({
+		name: "allowQuotes",
+		prompt: "Who can quote",
+		defaultValue: "on",
+		choices: [
+			{ value: "on", prompt: "Anyone", icon: "quote.bubble" },
+			{ value: "off", prompt: "Nobody", icon: "nosign" }
+		]
+	});
+	attributes.push({ name: "language", type: "language" });
+	return attributes;
+}
+
+// Reply/quote controls are written as sidecar records sharing the post's rkey (Bluesky has no atomic multi-write).
+// Best-effort: the post already exists, so a gate failure is logged rather than fatal — surfacing partial failure to
+// the user is a later refinement.
+async function writeGates(attributes, did, postUri, rkey, createdAt, isReply) {
+	const extraHeaders = { "content-type": "application/json" };
+	const createGate = async (collection, record) => {
+		try {
+			const gateBody = { collection: collection, repo: did, rkey: rkey, record: record };
+			await sendRequest(`${site}/xrpc/com.atproto.repo.createRecord`, "POST", JSON.stringify(gateBody), extraHeaders);
+		} catch (error) {
+			console.log(`${collection} failed (the post is still up): ${error}`);
+		}
+	};
+
+	// Threadgate — only on a top-level post (a threadgate's rkey must equal the thread root's, so a reply can't carry
+	// one) and only when replies aren't open to everyone. An empty allow list means "nobody", which is exactly what
+	// the "nobody" selection (and any selection lacking a relationship rule) produces.
+	const audience = new Set((attributes.replyAudience ?? "everybody").split(","));
+	if (!isReply && !audience.has("everybody")) {
+		const allow = [];
+		if (audience.has("following")) { allow.push({ "$type": "app.bsky.feed.threadgate#followingRule" }); }
+		if (audience.has("followers")) { allow.push({ "$type": "app.bsky.feed.threadgate#followerRule" }); }
+		if (audience.has("mentioned")) { allow.push({ "$type": "app.bsky.feed.threadgate#mentionRule" }); }
+		await createGate("app.bsky.feed.threadgate", { "$type": "app.bsky.feed.threadgate", post: postUri, allow: allow, createdAt: createdAt });
+	}
+
+	// Postgate — only when quotes are disallowed.
+	if (attributes.allowQuotes === "off") {
+		await createGate("app.bsky.feed.postgate", { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] });
+	}
 }
 
 async function performAction(actionId, target, actionValue) {
@@ -842,22 +916,29 @@ async function performAction(actionId, target, actionValue) {
 		// Here `target` is the DRAFT. Create the post; the reply threads on the server and the timeline/thread
 		// reconciles on the next refresh (nothing to return — createRecord only yields {uri, cid}).
 		const draft = target;
+		const attributes = draft.attributeValues ?? {};
+		const createdAt = new Date().toISOString();
 		const record = {
 			"$type": "app.bsky.feed.post",
-			text: draft.text,
-			createdAt: new Date().toISOString(),
+			text: draft.body,
+			createdAt: createdAt,
 		};
+		if (attributes.language != null) { record.langs = [attributes.language]; }
 		if (draft.metadata.parentUri != null) {
 			record.reply = {
 				root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
 				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
 			};
 		}
-		const facets = await buildFacets(draft.text);
+		const facets = await buildFacets(draft.body);
 		if (facets.length > 0) { record.facets = facets; }
-		const body = { collection: "app.bsky.feed.post", repo: did, rkey: draft.metadata.rkey, record: record };
+		const rkey = draft.metadata.rkey;
+		const body = { collection: "app.bsky.feed.post", repo: did, rkey: rkey, record: record };
 		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
 		await sendRequest(url, "POST", JSON.stringify(body), { "content-type": "application/json" });
+
+		// Reply/quote controls are separate records sharing the post's rkey (Bluesky has no atomic multi-write).
+		await writeGates(attributes, did, `at://${did}/app.bsky.feed.post/${rkey}`, rkey, createdAt, draft.metadata.parentUri != null);
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);
