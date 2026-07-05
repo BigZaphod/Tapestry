@@ -18,22 +18,33 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 ### 2.0
 
-The largest change since 1.0: the interface functions now **return** their results (and **throw** an `Error` to report failure) instead of calling separate completion functions.
+2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
 
-  * **Changed** — [`load()`](#load) returns an `Array` of `Item`s; the load ends when it returns. [`processResults()`](#processresults) still works for incremental delivery, but its `isComplete` argument is now ignored.
-  * **Changed** — [`verify()`](#verify) returns the verification result (an `Object` or display-name `String`) instead of reporting it through `processVerification()`.
-  * **Changed** — [`performAction(actionId, item, actionValue)`](#performaction) returns its result (actions now read their data from `item.metadata`); `actionValue` moved to the trailing position as a compatibility hook for items created by a pre-2.0 connector.
-  * **Removed** (when targeting 2.0) — `processError()`, `processVerification()`, and `actionComplete()` are no longer provided. Throw an `Error` instead.
-  * **Added** — [`item.metadata`](#metadata-dictionary), a per-item `[String: String]` bag for data an action needs.
-  * **Changed** — [`item.actions`](#actions-set) is a `Set` of action ids; manage it with the native `item.actions.add(id)` / `item.actions.delete(id)`, replacing the old per-action value strings (`item.actions = { id: "value" }`).
-  * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
-  * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
-  * **Added** — composing: the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object, letting an action open a composer (for example, replying to a post). See [`performAction`](#performaction).
-  * **Added** — composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …), declared per-draft with [`draft.rules`](#rules-object) (`characterUnit` / `characterCounter` / `fields` / `attributes`); the user's attribute choices arrive in [`draft.attributeValues`](#attributevalues-dictionary).
-  * **Added** — [`crypto.randomUUID()`](#cryptorandomuuid), the standard function for generating a random UUID string (for idempotency keys and similar).
-  * **Added** — standard web utilities JavaScriptCore doesn't provide: [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes) and [`btoa`/`atob`](#btoa-and-atob) (base64).
+**Data types are plain JavaScript objects.** `Item`, `Draft`, and the attachment types are now plain `kind`-tagged objects rather than host-exported classes. The `create…` factories still work and still stamp the `kind` for you, but you can now build any object as a literal and mutate it freely in place — and the newer composing structures (`rules`, attributes, attachment entries) are just literals, with no factory of their own. Mostly transparent if you already use the factories; see [Objects](#objects).
 
-Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions.
+**Interface functions** [`load()`](#load), [`verify()`](#verify), and [`performAction()`](#performaction) now **return** their results and **throw** an `Error` to report failure, instead of calling separate completion functions:
+
+  * `load()` returns an `Array` of `Item`s and ends when it returns; [`processResults()`](#processresults) still delivers incrementally, but its `isComplete` argument is now ignored.
+  * `verify()` returns the verification result — an `Object` or a display-name `String`.
+  * `performAction(actionId, item, actionValue)` returns its result; `actionValue` moved to the trailing position as a compatibility hook for items created by a pre-2.0 connector.
+  * `processError()`, `processVerification()`, and `actionComplete()` are no longer provided when targeting 2.0 — throw an `Error` instead.
+
+**Items** carry their own metadata and **actions** got new behaviors:
+
+  * [`item.metadata`](#metadata-dictionary) — a per-item `[String: String]` bag for the data an action needs (actions read from it instead of an `actionValue`).
+  * [`item.actions`](#actions-set) is a `Set` of action ids, managed with `item.actions.add(id)` / `item.actions.delete(id)` (replacing the old per-action value strings).
+  * optional [presentation attributes](#action-presentation) on an action — `priority`, `group`, and `destructive` — control where and how it appears.
+  * [`Item.delete(uri)`](#removing-an-item) reports an item as removed (from `load()` or `performAction()`), so a connector can delete a post or reconcile content that no longer exists.
+
+**Composing** lets an action open a composer and create posts:
+
+  * the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object (for example, replying to a post).
+  * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
+  * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
+
+**Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
+
+Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions, and do not get the new JavaScript environment functions.
 
 ### 1.4
 
@@ -92,6 +103,8 @@ const item = { kind: "item", uri: uri, date: date, actions: new Set(), title: "H
 ```
 
 Every object carries a `kind` (`"item"`, `"identity"`, `"media"`, `"link"`, `"poll"`, …) so Tapestry knows what it is; the factories set it. An `Item` may omit `kind` — an untagged object in an item position is read as an item — but an attachment literal **must** include its `kind` so it's recognized. Each object's section below documents its shape.
+
+**Factories exist only for these top-level `kind`-tagged types** (and, for composing, [`Draft`](#draft)) — use a factory or a literal, your choice. The *nested, fixed-shape* parts of a `Draft` — its [`rules`](#rules-object), the setting attributes, the character counter, and the like — carry no `kind` and have **no** factory of their own; you write them as plain object literals. That split is deliberate: a factory only earns its place where it stamps a `kind`, so the absence of, say, a `Choice.create()` is by design, not an omission.
 
 To leave a value unset (nil on the Tapestry side), simply don't set the property:
 
@@ -464,6 +477,14 @@ A heading shown at the top of the composer, such as "Reply to @alice". This is c
 #### context: Array of Item
 
 Posts to display above the composer for context — for a reply, the post being replied to. This is display only; a connector carries the actual reply references in `metadata`.
+
+#### attachments: Array of Item
+
+Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). This is how you **quote** a post: put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
+
+`attachments` is for **display** — the composer renders the embedded `Item` as a quote preview. To *build* the quote at submit, don't dig the reference back out of the attachment: when you build the draft (you already have the item in hand), stash the identifiers you need in the draft's own [`metadata`](#metadata-dictionary-1) — exactly as you carry a reply's references there. Same split as `context` vs. the reply refs: the post to *show* rides `attachments`, the reference you *post with* rides `metadata`.
+
+The property is an array so the shape can grow, but a quote is a single embedded post. (Media and poll attachments on a draft are a later addition; today only an embedded `Item` quote is supported.)
 
 #### metadata: Dictionary
 
@@ -2072,7 +2093,7 @@ Either `"primary"` (the default) or `"secondary"`. Primary actions are buttons d
 
 **`group`**
 
-A name that clusters related actions into a single button that opens a small menu — for example a "boost" and a "quote" under one affordance. The group is represented by the icon of its first applicable action. Grouping only applies to the buttons on the item; in the overflow menu actions are always listed individually. All actions sharing a `group` should have the same `priority`.
+A name that clusters related actions into a single button that opens a small menu — for example a "boost" and a "quote" under one affordance. A grouped action **always** opens a menu when tapped, even when it is the only action from its group currently on the item: a "boost" grouped with a "quote" that isn't applicable (an older post, or a server that doesn't support quoting) still opens a one-item menu rather than boosting immediately. This keeps the button's behavior consistent — it is always a deliberate two-tap, never a surprise one-shot — and avoids revealing whether an optional sibling like quote happens to be available. The menu is represented by the icon of its first applicable action. Grouping only applies to the buttons on the item; in the overflow menu actions are always listed individually. All actions sharing a `group` should have the same `priority`.
 
 **`destructive`**
 
