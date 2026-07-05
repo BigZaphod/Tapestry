@@ -29,7 +29,7 @@ The largest change since 1.0: the interface functions now **return** their resul
   * **Added** — optional [presentation attributes](#action-presentation) on actions — `priority`, `group`, and `destructive` — controlling where and how an action appears.
   * **Added** — [`Item.delete(uri)`](#removing-an-item) to report an item as removed from `load()` or `performAction()`, so a connector can delete a post or reconcile content that no longer exists.
   * **Added** — composing: the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object, letting an action open a composer (for example, replying to a post). See [`performAction`](#performaction).
-  * **Added** — a live character counter for the composer, declared per-draft with [`draft.rules`](#rules-object) (`rules.text`).
+  * **Added** — composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …), declared per-draft with [`draft.rules`](#rules-object) (`characterUnit` / `characterCounter` / `fields` / `attributes`); the user's attribute choices arrive in [`draft.attributeValues`](#attributevalues-dictionary).
   * **Added** — [`crypto.randomUUID()`](#cryptorandomuuid), the standard function for generating a random UUID string (for idempotency keys and similar).
   * **Added** — standard web utilities JavaScriptCore doesn't provide: [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes) and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
@@ -438,18 +438,28 @@ A `Draft` represents something the user is composing, such as a reply. An action
 
 ```javascript
 const draft = Draft.create();
-draft.title = "Reply to @alice";
-draft.text = "@alice ";
+draft.header = "Reply to @alice";   // the composer's heading (chrome — not part of the post)
+draft.body = "@alice ";             // the post text
 draft.actions.add("send");
 ```
 
-#### text: String
+The draft's content properties — `body`, `title`, and `contentWarning` — mirror the same properties on an [`Item`](#item): a `Draft` is the writable half of a post. Pre-fill any of them and read them back when submitting.
 
-The text the user is composing. Pre-fill it (for example, a reply's mention) and read it back when submitting.
+#### body: String
+
+The main post text. Pre-fill it (for example, a reply's mention) and read it back when submitting. Mirrors [`item.body`](#body-string).
 
 #### title: String
 
-A title shown at the top of the composer, such as "Reply to @alice".
+An optional post title, for services that have one (a blog post, say). Mirrors [`item.title`](#title-string). The composer shows an editor for it only if [`rules.fields`](#rules--content-fields-and-character-counting) lists `title`.
+
+#### contentWarning: String
+
+An optional content warning / spoiler shown before the body. Mirrors [`item.contentWarning`](#contentwarning-string). The composer shows an editor for it only if [`rules.fields`](#rules--content-fields-and-character-counting) lists `contentWarning`.
+
+#### header: String
+
+A heading shown at the top of the composer, such as "Reply to @alice". This is composer chrome that labels the editor — it is *not* part of the post (contrast with `title`, which is post content).
 
 #### context: Array of Item
 
@@ -467,34 +477,112 @@ The ids of the *submit* actions that apply to this draft (the buttons shown in t
 
 An optional message shown to the user when a submit is returned to the composer for a correction (see [`performAction`](#performaction)).
 
+#### attributeValues: Dictionary
+
+A `[String: String]` map holding the user's current choice for each *setting attribute* declared in [`rules.attributes`](#rules--setting-attributes), keyed by the attribute's `name`. The composer seeds it from each attribute's `defaultValue` and updates it as the user changes controls; read it back when submitting — for example `draft.attributeValues.visibility`. A `multiple` attribute's value is the selected values comma-joined.
+
 #### rules: Object
 
-Connector-declared rules that tell the composer how to behave for this draft. Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
+Connector-declared rules that tell the composer how to behave for this draft: which content fields it offers and how they're counted, and the *setting attributes* it presents (visibility, language, per-post permissions, …). Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
 
-##### rules.text — character counting
+##### rules — content fields and character counting
 
-Describes how the service measures a post's length, so the composer can show an accurate live character counter. The count is evaluated entirely in the app — the draft is never sent back to the connector to be measured — so you *declare* the weighting rather than compute it. Omit `rules.text` for a service with no length limit, and no counter is shown.
+Declares which content fields the composer offers, how each is measured/shaped, and the length limits. Counting is evaluated entirely in the app — the draft is never sent back to the connector to be measured — so you *declare* the weighting.
 
 ```javascript
 draft.rules = {
-    text: {
-        countUnit: "graphemes",   // "graphemes" | "codepoints" | "utf16"
-        maxLength: 500,           // the limit, in countUnit
-        // maxBytes: 3000,        // optional second limit on UTF-8 byte length (e.g. Bluesky)
-        weights: {
-            "https?://[^\\s]+": 23,          // every URL counts as 23
-            "(@\\w+)(@[\\w.-]+)?": "$1"      // a mention counts only "@user" — the @domain is free
-        }
+    characterUnit: "graphemes",   // "graphemes" | "codepoints" | "utf16" — how text is measured, service-wide
+    // The single visible "N remaining" counter. Its limit may span several fields. Omit → no counter shown.
+    characterCounter: {
+        fields: ["body", "contentWarning"],       // fields whose counts sum toward this limit
+        characterLimit: { maxLength: 500 }         // maxLength and/or maxBytes
+    },
+    // The content fields the composer offers — a field not listed isn't enabled. Keys: body | title | contentWarning.
+    fields: {
+        body: {
+            placeholder: "What's on your mind?",    // empty-field prompt (often different for a reply)
+            weights: {                              // per-field weighting — applies to THIS field only
+                "https?://[^\\s]+": 23,             // every URL counts as 23
+                "(@\\w+)(@[\\w.-]+)?": "$1"         // a mention counts only "@user" — the @domain is free
+            }
+        },
+        contentWarning: { availability: "hidden", placeholder: "Write your warning here" }
     }
 };
 ```
 
-  * **countUnit** — how ordinary text is measured: `"graphemes"` (user-perceived characters, so a multi-codepoint emoji counts as one), `"codepoints"` (Unicode scalars), or `"utf16"` (UTF-16 code units). Most modern services count graphemes.
-  * **maxLength** — the limit, expressed in `countUnit`. Required whenever `text` is present.
-  * **maxBytes** — an optional second limit on the text's raw UTF-8 byte length, enforced *alongside* `maxLength`. Bluesky, for example, caps a post at both 300 graphemes and 3000 bytes, and the byte limit can be reached first on emoji-heavy text. Omit it if the service has no byte limit.
-  * **weights** — an optional object mapping a regular expression to the count its matches contribute *instead* of their normal length. The value is either a number (a fixed cost — for example a URL that always counts as 23) or the string `"$N"` (the length of capture group *N* — for example counting only the `@user` part of a mention while its domain is free). Text not matched by any pattern counts normally. Where two patterns could match the same span the leftmost match wins (the longer one on a tie), so the result never depends on the order you list them.
+  * **characterUnit** — `"graphemes"` (default), `"codepoints"`, or `"utf16"`. Shared by every field.
+  * **characterCounter** — the one prominent counter. `fields` are summed (each counted with its *own* `weights`); `characterLimit` is `{ maxLength?, maxBytes? }` (a byte cap catches emoji-heavy text). Omit `characterCounter` entirely and no visible counter is shown.
+  * **fields** — a map keyed by `body` / `title` / `contentWarning`; listing a field is what enables it in the composer (an unlisted field isn't offered at all). Each value is optional and may set:
+    * **weights** — a regex mapped to a number (a fixed cost — a URL = 23) or `"$N"` (the length of capture group *N* — counting only a mention's `@user`). It applies to *this field only*, so a URL in a content warning isn't weighted like one in the body. Overlaps resolve leftmost-first (longest on a tie), so order doesn't matter.
+    * **characterLimit** — an independent `{ maxLength?, maxBytes? }` cap on just this field (a title ≤ 100), separate from `characterCounter`.
+    * **placeholder** — the prompt shown in the field's editor while it's empty (e.g. `"What's on your mind?"`, or `"Post your reply"` for a reply). Omit for the composer's own default.
+    * **availability** — one word for how the composer offers the field (default `"always"`):
+        * `"always"` — shown and cannot be hidden; but the user may leave it empty.
+        * `"required"` — always shown *and* mandatory; a submit is blocked if it's empty.
+        * `"shown"` — shown by default, but the user can toggle it off and leave it empty.
+        * `"hidden"` — hidden by default, but the user can toggle it on to fill it in.
 
-Declare weights that mirror how the service actually counts (Mastodon, for instance, reserves 23 characters for every URL and ignores a mention's domain).
+##### rules — setting attributes
+
+`rules.attributes` is an array of *setting controls* the composer presents alongside the content fields — the knobs the app has no built-in concept of, such as post visibility, language, or who may reply. Each is a small control the app renders in the composer; the user's current choice for each lives in [`draft.attributeValues`](#attributevalues-dictionary), keyed by `name`. Read those back when submitting.
+
+```javascript
+draft.rules = {
+    // …content fields / characterCounter as above…
+    attributes: [
+        {
+            name: "visibility",             // key into draft.attributeValues
+            prompt: "Visibility",           // the control's label
+            // `type` defaults to "single". A two-choice "single" stands in for an on/off switch, so every
+            // control has a value to show — there is no switch type here (unlike ui-config.json).
+            defaultValue: "public",
+            icon: "globe",                  // SF Symbol for the control's chip in the composer bar
+            choices: [
+                { value: "public",  prompt: "Public",    description: "Anyone on and off",   icon: "globe" },
+                { value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" }
+            ]
+        },
+        {
+            name: "replyAudience",
+            prompt: "Who can reply",
+            type: "multiple",               // pick several; the value is the chosen values comma-joined
+            defaultValue: "everybody",
+            requireSelection: true,         // the user can't clear the selection entirely
+            description: "Everybody can reply by default. Choose “Nobody”, or combine groups.",
+            choices: [
+                { value: "everybody", prompt: "Everybody", exclusive: true },  // clears the others when picked
+                { value: "nobody",    prompt: "Nobody",    exclusive: true },
+                { value: "mentioned", prompt: "Mentioned users" },
+                { value: "following", prompt: "People you follow" }
+            ]
+        },
+        {
+            name: "quotePolicy",
+            prompt: "Who can quote",
+            defaultValue: "public",
+            availableWhen: { attribute: "visibility", oneOf: ["public"] },   // unavailable otherwise
+            choices: [
+                { value: "public", prompt: "Anyone" },
+                { value: "nobody", prompt: "Just me" }
+            ]
+        },
+        { name: "language", type: "language" }   // app-populated OS language list (ISO 639-1 codes)
+    ]
+};
+```
+
+Each attribute has these properties:
+
+  * **name** (required) — the key the user's choice is stored under in `draft.attributeValues`.
+  * **type** — `"single"` (default; pick one of `choices`), `"multiple"` (pick several; the stored value is the chosen values comma-joined), or `"language"` (a picker the app fills from the OS language list as ISO 639-1 codes — `choices` is ignored, and the app supplies a default label and icon you may override).
+  * **prompt** — the control's label. Optional; `"language"` supplies its own, and `"single"`/`"multiple"` fall back to `name`.
+  * **description** — an optional longer explanation shown under the prompt.
+  * **defaultValue** — the value seeded into `attributeValues` when the composer opens (comma-joined for `"multiple"`).
+  * **choices** — an array of `{ value, prompt, description?, icon?, exclusive? }`: `value` is stored, `prompt` is the label, and an optional `description` shows as a second line under the label (e.g. a visibility option's "Only your followers"). An optional `icon` (SF Symbol) becomes the bar chip's glyph while that choice is selected — so the chip reflects the current value at a fixed width (Mastodon visibility uses `globe` / `moon` / `lock` / `at`). Without an icon the chip falls back to the first two letters of the selected choice's prompt. In a `"multiple"`, `exclusive: true` makes a choice clear the others when picked (and any other choice clears it) — for example a "Everybody" that can't coexist with narrower groups.
+  * **requireSelection** — for a `"multiple"`, forbid an empty selection (the user must keep at least one).
+  * **icon** — an SF Symbol name for the control's chip in the composer bar.
+  * **availableWhen** — `{ attribute, oneOf }`: the control is unavailable unless `attributeValues[attribute]` is one of `oneOf` — it dims and, when the user opens it, the popover explains the condition (e.g. "Available only when Visibility is Public"). This is presentational only — still guard which values you actually apply when submitting.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -580,16 +668,24 @@ async function performAction(actionId, target, actionValue) {
     if (actionId == "reply") {
         const item = target;   // the reply action's target is the item being replied to
         const draft = Draft.create();
-        draft.title = "Reply to " + item.author.name;
-        draft.text = item.author.username + " ";     // pre-fill the mention
+        draft.header = "Reply to " + item.author.name;    // composer heading (not part of the post)
+        draft.body = item.author.username + " ";          // pre-fill the mention
         draft.context = [item];
         draft.metadata = { replyTo: item.metadata.id, idempotencyKey: crypto.randomUUID() };
+        draft.rules = {
+            fields: { body: {} },
+            attributes: [ { name: "language", type: "language" } ]   // offer a language picker
+        };
         draft.actions.add("send");
         return draft;
     }
     else if (actionId == "send") {
         const draft = target;   // the send action's target is the Draft being submitted
-        const body = { status: draft.text, in_reply_to_id: draft.metadata.replyTo };
+        const body = {
+            status: draft.body,
+            language: draft.attributeValues.language,     // the user's setting-attribute choice
+            in_reply_to_id: draft.metadata.replyTo
+        };
         const headers = { "content-type": "application/json", "Idempotency-Key": draft.metadata.idempotencyKey };
         const response = await sendRequest(`${site}/api/v1/statuses`, "POST", JSON.stringify(body), headers);
         const post = JSON.parse(response);
