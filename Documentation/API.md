@@ -27,7 +27,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * `load()` returns an `Array` of `Item`s and ends when it returns; [`processResults()`](#processresults) still delivers incrementally, but its `isComplete` argument is now ignored.
   * `verify()` returns the verification result — an `Object` or a display-name `String`.
   * `performAction(actionId, item, actionValue)` returns its result; `actionValue` moved to the trailing position as a compatibility hook for items created by a pre-2.0 connector.
-  * `processError()`, `processVerification()`, and `actionComplete()` are no longer provided when targeting 2.0 — throw an `Error` instead.
+  * `processError()`, `processVerification()`, and `actionComplete()` are no longer provided when targeting 2.0 or later — throw an `Error` instead.
 
 **Items** carry their own metadata and **actions** got new behaviors:
 
@@ -42,9 +42,16 @@ The list below summarizes what changed at each version so you can upgrade an old
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
   * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
 
+**Networking is unified under [`fetch()`](#fetch).** One function covers everything `sendRequest()` and `sendConditionalRequest()` did — plus JSON/form/query serialization, binary uploads, downloads kept as [`FileAsset`](#fileasset) handles, and typed errors:
+
+  * `await fetch(url).json()` — the dominant "GET and parse" case is one await.
+  * verb presets (`fetch.post(url, {...})`), `json:`/`form:`/`params:` options, and [`fetch.conditional`](#fetchconditional) for 304-aware feed refreshes.
+  * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
+  * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
+
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
-Connectors that do **not** set `minimum_app_version` to 2.0 keep all pre-2.0 behavior unchanged, including the old completion functions, and do not get the new JavaScript environment functions.
+Connectors that do **not** set `minimum_app_version` to 2.0 or later keep all pre-2.0 behavior unchanged — including the old completion functions and `sendRequest()`/`sendConditionalRequest()` — and do not get `fetch()` or the new JavaScript environment functions.
 
 ### 1.4
 
@@ -83,7 +90,7 @@ Any variables that have been specified in `ui-config.json` are set before the sc
 The current value for the `site` input will be set before the `plugin.js` script is executed. This lets the script adapt to use `mastodon.social`, `mastodon.art`, etc. with code such as this:
 
 ```javascript
-sendRequest(site + "/api/v1/timelines/home?limit=40")
+fetch(site + "/api/v1/timelines/home?limit=40")
 ```
 
 See the Configuration section below for the specification of `ui-config.json` and each input/variable.
@@ -203,7 +210,7 @@ The `uri` is the same value the item was created with — that's all Tapestry ne
 ```javascript
 async function performAction(actionId, item, actionValue) {
 	if (actionId == "delete") {
-		await sendRequest(`${site}/api/v1/statuses/${item.metadata.id}`, "DELETE");
+		await fetch.delete(`${site}/api/v1/statuses/${item.metadata.id}`);
 		return [Item.delete(item.uri)];
 	}
 }
@@ -707,9 +714,8 @@ async function performAction(actionId, target, actionValue) {
             language: draft.attributeValues.language,     // the user's setting-attribute choice
             in_reply_to_id: draft.metadata.replyTo
         };
-        const headers = { "content-type": "application/json", "Idempotency-Key": draft.metadata.idempotencyKey };
-        const response = await sendRequest(`${site}/api/v1/statuses`, "POST", JSON.stringify(body), headers);
-        const post = JSON.parse(response);
+        const headers = { "Idempotency-Key": draft.metadata.idempotencyKey };
+        const post = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
         return [ Item.createWithUriDate(post.url, new Date(post.created_at)) /* …fill in the rest… */ ];
     }
 }
@@ -723,9 +729,190 @@ See the section on `actions.json` for more information on how to define and perf
 The following functions are available to the script to help it perform the actions listed above.
 
 ---
+### fetch
+
+`fetch(url, options) → pending request`
+
+The networking function for connectors targeting 2.0 and later — every request goes through it. If credentials are configured, a bearer token is included with the request automatically (see [Authorization](#plugin-configjson)).
+
+  * url: `String` with the endpoint that will be retrieved. Assumed to be properly encoded (use JavaScript's `encodeURIComponent` for pieces you assemble — or let `params` do it for you).
+  * options: `Object` describing the request (optional). The options are pure *data* — there are no behavior flags. What you get back is controlled by what you call on the result (see *Reading the response*).
+
+Most requests use a **verb preset** — `fetch.post`, `fetch.delete`, and friends — instead of passing a `method`. They're the normal way to write; see [Verb presets](#verb-presets) below.
+
+There is also one specialized variant: **[`fetch.conditional`](#fetchconditional)**, a GET that skips re-downloading a feed when nothing has changed (an `HTTP 304`). It's worth using for the main feed request in `load()` — see its section at the end.
+
+#### Options
+
+  * headers: `Dictionary` of `String` key/value pairs added to the request. Values are sent literally (the `Authorization` header is added for you — see [Authorization](#plugin-configjson)).
+  * params: `Dictionary` of query parameters — each key and value is percent-encoded for you and appended to the URL's query.
+  * method: `String` HTTP method, for anything the verb presets don't cover. The default is "GET".
+  * **at most one** body option:
+      * body: `String` sent as-is (literal — Tapestry never rewrites your body content), or a [`FileAsset`](#fileasset) whose bytes are streamed as the raw request body (its `mimeType` becomes the Content-Type unless a header overrides it).
+      * json: any value — serialized with `JSON.stringify` and sent with `content-type: application/json`.
+      * form: `Dictionary` — URL-encoded and sent with `content-type: application/x-www-form-urlencoded`.
+      * multipart: `Array` of parts, each `{ name, value }` (a text field) or `{ name, file, filename, contentType }` (a [`FileAsset`](#fileasset) part) — sent as `multipart/form-data`.
+      * base64: a [`FileAsset`](#fileasset) — the body is the base64 text of the file's bytes.
+  * authorizedField: `String` — the name of a form field that Tapestry fills with the account's access token. The connector never sees the token. Combines with `form`; use it for the rare service that wants the token in the request body rather than the `Authorization` header (e.g. micro.blog's `/account/verify`). See [Authorization](#authorization-and-the-access-token).
+
+Mistakes throw immediately with a `TypeError`: an unknown option name, more than one body option, or a body on a GET/HEAD request.
+
+#### Verb presets
+
+`fetch.get`, `fetch.post`, `fetch.put`, `fetch.patch`, `fetch.delete`, and `fetch.head` are `fetch` with the HTTP method filled in — the normal way to make a request. Each takes the same `(url, options)` as `fetch`, so a preset is just shorter than passing `method`:
+
+| Preset | Typical use |
+|---|---|
+| `fetch.get(url)` | read — the default (`fetch(url)` is the same thing) |
+| `fetch.post(url, { json })` | create, submit, or toggle |
+| `fetch.delete(url)` | remove |
+| `fetch.put` / `fetch.patch` | replace / update |
+| `fetch.head(url)` | headers only, no body |
+
+These three shapes cover almost every write a connector does:
+
+```javascript
+// Fire-and-forget: no reader, so success is simply "it didn't throw" (a like, a toggle, a delete).
+await fetch.post(`${site}/api/v1/statuses/${id}/favourite`);
+await fetch.delete(`${site}/api/v1/statuses/${id}`);
+
+// POST a JSON body and read the created object back in one await.
+const created = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: record }).json();
+
+// POST a form-encoded body.
+await fetch.post(`${site}/posts/favorites`, { form: { id } });
+```
+
+(A `fetch.post` with no reader still **throws** on an error status — a write can't fail silently. To inspect a failing write's status yourself, add [`.response()`](#reading-the-response).)
+
+#### Authorization and the access token
+
+For security, the access token is **never exposed to connector JavaScript**. Tapestry attaches it for you:
+
+  * The **`Authorization` header** is added automatically to every request to an authorized endpoint (same host as the feed, over HTTPS). Its format comes from the connector's `authorization_header` template (default `Bearer __ACCESS_TOKEN__`) — see [Authorization](#plugin-configjson). This covers virtually every authenticated API.
+  * For the rare service that wants the token as a **form field in the body** instead (micro.blog's `/account/verify`), use [`authorizedField`](#fetch) — Tapestry fills a form field of that name with the token:
+
+    ```javascript
+    // POSTs body "token=<the access token>" — the connector never handles the token
+    await fetch.post(`${site}/account/verify`, { authorizedField: "token" });
+    ```
+
+Your own body and header content is otherwise sent **literally** — Tapestry does not scan it for placeholders, so user-composed text can never accidentally embed the token.
+
+#### Reading the response
+
+`fetch()` starts the request immediately and returns a pending request you read with **one await**, in the form you want:
+
+```javascript
+const post = await fetch(url).json();       // the parsed JSON body
+const text = await fetch(url).text();       // the decoded body text
+const file = await fetch(url).file();       // the body kept as a FileAsset (bytes stay in the app)
+const response = await fetch(url).response();   // the whole exchange — status, headers, body accessors
+await fetch.post(url);                      // no reader — "just make sure it worked"
+```
+
+The rule for errors: **if you ask for the body (or just await the call), a non-2xx status throws an [`HTTPError`](#errors)** — a fire-and-forget write can never fail silently. **If you ask for `.response()`, the status is yours to judge** — any status resolves, and you check `response.status`/`response.ok` yourself.
+
+However many readers you touch, only ONE request is sent — and the body can be read more than once (`.response()` then `.text()` is fine).
+
+#### The Response object
+
+`.response()` (and a bare `await`) resolve to a Response:
+
+  * status: `Number` HTTP status code.
+  * ok: `Boolean` — status in the 200 range.
+  * statusText: `String` description of the status.
+  * url: `String` — the final URL, after any redirects.
+  * headers.get(name): `String` header value, case-insensitive, or `null`.
+  * text() / json(): `Promise` for the decoded body / parsed JSON (async — the body isn't read until you ask).
+  * file(): the body as a [`FileAsset`](#fileasset).
+
+#### FileAsset
+
+An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You receive one from `fetch(url).file()`, and you send one with the `body:`, `multipart:`, or `base64:` options.
+
+  * mimeType: `String`
+  * byteSize: `Number`
+  * filename: `String` or `null`
+  * isImage / isVideo / isAudio: `Boolean`
+
+A FileAsset stays valid as long as you keep a reference to it (holding one across actions is fine). In rare cases the operating system can reclaim the underlying temporary storage while the app is suspended — using the asset then throws an error with `name` `"FileUnavailableError"`, and the remedy is to fetch it again.
+
+#### Errors
+
+A non-2xx status (outside `.response()`) throws an `HTTPError`:
+
+  * name: `"HTTPError"`
+  * status / statusText: the HTTP status.
+  * response: the full [Response](#the-response-object) — the error body is readable (`await error.response.json()`).
+  * userMessage: the server's own human-readable error text, extracted from a JSON error body when possible, or `null`.
+  * message: a diagnostic string with the status, URL, and the start of the error body — good for logs.
+
+Branch on `error.name` and `error.status` — never on the wording of `message`:
+
+```javascript
+try {
+	await fetch.post(url, { json: body });
+}
+catch (error) {
+	if (error.name == "HTTPError" && error.status == 404) {
+		return [];   // deleted upstream — treat as empty
+	}
+	throw error;
+}
+```
+
+A network/transport failure (no HTTP response at all) rejects with a plain `Error`.
+
+> **Note:** `userMessage` works on YOUR errors too: set it on any `Error` your connector throws from `verify()`, `load()`, or `performAction()`, and Tapestry shows that text to the user in alerts while `message` goes to the log.
+
+#### EXAMPLE
+
+A Mastodon user's identity is determined by fetching the credential verification endpoint:
+
+```javascript
+async function verify() {
+	const jsonObject = await fetch(site + "/api/v1/accounts/verify_credentials").json();
+
+	return {
+		displayName: "@" + jsonObject["username"],
+		icon: jsonObject["avatar"]
+	};
+}
+```
+
+> **Note:** The bearer token is attached automatically (see [Authorization and the access token](#authorization-and-the-access-token)); a service that wants the token in the body uses [`authorizedField`](#fetch).
+
+#### fetch.conditional
+
+`fetch.conditional(url, options) → pending request`
+
+An [HTTP conditional request](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Conditional_requests) — replacing [`sendConditionalRequest()`](#sendconditionalrequest) for connectors targeting 2.0 and later, and GET-only by definition. Tapestry records the modified date and/or etag the server returns for each `url` and automatically sends it with your next conditional request for that same `url`.
+
+The name changes what the readers return: on an `HTTP 304 Not Modified`, `.text()`, `.json()`, and `.file()` resolve to **`null`** (an empty body is `""`, so the two are distinguishable), and `.response()` resolves with `status` 304.
+
+```javascript
+async function load() {
+	const xml = await fetch.conditional(site).text();
+	if (xml === null) {
+		return [];   // 304 — nothing changed since last time
+	}
+	// …parse and return items…
+}
+```
+
+For feed-like data sources (such as RSS), this often results in a very significant speedup because it avoids re-downloading and re-importing unchanged content.
+
+> **Note:** Not all web servers are correctly configured to support conditional requests. If the server doesn't send the required headers or otherwise ignores them, this behaves identically to a plain `fetch()`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0 (available in 2.0 and all later versions). Older connectors use [`sendRequest()`](#sendrequest) and [`sendConditionalRequest()`](#sendconditionalrequest).
+
+---
 ### sendRequest
 
 `sendRequest(url, method, parameters, extraHeaders, fullResponse) → Promise`
+
+> **Compatibility:** Only available when `minimum_app_version` is **less than 2.0** — connectors targeting 2.0 or later use [`fetch()`](#fetch) instead.
 
 Sends a request. If configured, a bearer token will be included with the request automatically.
 
@@ -755,18 +942,7 @@ For the "HEAD" method, the string result contains a JSON dictionary containing t
 
 All successful requests return a string. Typically this will be HTML text or a JSON payload created from the response body. Regular expressions can be used on HTML and `JSON.parse` can be used to build queryable object. For XML text, `xmlParse()` can convert it to an object. In all cases, the data extracted will be returned to the Tapestry app.
 
-The `parameters` string and values in `extraHeaders` can contain patterns that will be replaced with values managed by the Tapestry app:
-
-  * `__ACCESS_TOKEN__` The access token returned when authenticating with OAuth or JWT.
-  * `__CLIENT_ID__` The client ID used to identify the connector with the API.
-
-For example, if you need to "POST" the client ID, you would use "client=\_\_CLIENT\_ID\_\_&text=foo" for the `parameters`. If you need this information in a header, use:
-
-```javascript
-	let extraHeaders = { "X-Client-Id", "__CLIENT_ID__" };
-	sendRequest(url, "GET", null, extraHeaders)
-	...
-```
+> **Note:** Earlier versions replaced `__ACCESS_TOKEN__` / `__CLIENT_ID__` patterns inside `parameters` and `extraHeaders`. That substitution was **removed** — only one connector ever used it, and it risked embedding the token in unintended content. The `Authorization` header is still added automatically (see [Authorization](#plugin-configjson)); a service needing the token in the body should adopt 2.0 and use [`authorizedField`](#fetch).
 
 The `fullResponse` flag can be set to `true`. In this mode, the text response is a JSON dictionary that contains all the results from the request:
 
@@ -788,21 +964,21 @@ The `fullResponse` flag can be set to `true`. In this mode, the text response is
 A Mastodon user’s identity is determined by sending a request to verify credentials:
 
 ```javascript
-async function verify() {
-	const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
-	const jsonObject = JSON.parse(text);
+function verify() {
+	sendRequest(site + "/api/v1/accounts/verify_credentials")
+	.then((text) => {
+		const jsonObject = JSON.parse(text);
 
-	const displayName = "@" + jsonObject["username"];
-	const icon = jsonObject["avatar"];
-
-	return {
-		displayName: displayName,
-		icon: icon
-	};
+		processVerification({
+			displayName: "@" + jsonObject["username"],
+			icon: jsonObject["avatar"]
+		});
+	})
+	.catch((error) => {
+		processError(error);
+	});
 }
 ```
-
-> **Note:** The JavaScript code doesn’t have access to the OAuth access token (for security, no authentication information is exposed to the connector). If an access token is needed in a list of `parameters`, use `__ACCESS_TOKEN__` — it will be substituted before the request is sent to the endpoint.
 
 ---
 ### sendConditionalRequest
@@ -819,7 +995,7 @@ For feed-like data sources (such as RSS), this often results in a very significa
 
 > **Note:** Not all web servers are correctly configured to support conditional requests. If the server doesn't send the required headers or otherwise ignores them, this function will fallback to behaving identically to `sendRequest()`.
 
-> **Compatibility:** Requires `minimum_app_version` >= 1.3.
+> **Compatibility:** Requires `minimum_app_version` >= 1.3 **and less than 2.0** — connectors targeting 2.0 or later use [`fetch.conditional`](#fetchconditional) instead.
 
 ---
 ### lookupIcon
@@ -1258,7 +1434,7 @@ For example, a string value of `OAuth oauth_consumer_key="__CLIENT_ID__", oauth_
 
 	Authorization: OAuth oauth_consumer_key="dead-beef-1234" oauth_token="feed-face-5678"
 
-Any credentials collected by Tapestry are used automatically during a `sendRequest`. An authorization header will be added when the following are true:
+Any credentials collected by Tapestry are used automatically during a `fetch()` (or, pre-2.0, a `sendRequest`). An authorization header will be added when the following are true:
 
   * URL scheme is HTTPS
   * Port is 443
@@ -1378,8 +1554,7 @@ async function load() {
 	
 	const endpoint = `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/${summaryName}.geojson`;
 
-	const responseText = await sendRequest(endpoint);
-	const jsonObject = JSON.parse(responseText);
+	const jsonObject = await fetch(endpoint).json();
 
 	const features = jsonObject["features"];
 

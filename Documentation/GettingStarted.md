@@ -179,22 +179,22 @@ async function load() {
 	item.body = "Hello world!";
 
 	const endpoint = `${site}/api`;
-	const text = await sendRequest(endpoint);
+	const text = await fetch(endpoint).text();
 	console.log(`text = ${text}`);
 
 	return [item];
 }
 ```
 
-The first thing we do is create an `endpoint` that points to the site’s API. That endpoint is used with the [sendRequest](https://github.com/TheIconfactory/Tapestry/blob/main/Documentation/API.md#sendrequest) function provided by Tapestry.
+The first thing we do is create an `endpoint` that points to the site’s API. That endpoint is used with the [fetch](https://github.com/TheIconfactory/Tapestry/blob/main/Documentation/API.md#fetch) function provided by Tapestry, and `.text()` says what we want back — the response body as text.
 
-Notice that `load()` is now declared `async` and we `await` the request. `sendRequest` returns a `Promise`, and `await` lets us write the code as if it ran top-to-bottom, pausing until the response arrives.
+Notice that `load()` is now declared `async` and we `await` the request. `fetch` is asynchronous, and `await` lets us write the code as if it ran top-to-bottom, pausing until the response arrives.
 
-> **Note:** If you’ve used the fetch API in a browser, you’re a power user that already has a good idea on how this all works. The main difference is that Tapestry handles all authentication on the request if the connector uses OAuth or JWT. Your script doesn’t need to worry about acquiring tokens or managing them securely: Tapestry handles all of that. If none of this makes sense to you, don’t worry - it’s not required to write a basic connector!
+> **Note:** If you’ve used the fetch API in a browser, you’re a power user that already has a good idea on how this all works. Tapestry’s version has some conveniences of its own (like `.text()` and `.json()` directly on the call), and the main difference is that Tapestry handles all authentication on the request if the connector uses OAuth or JWT. Your script doesn’t need to worry about acquiring tokens or managing them securely: Tapestry handles all of that. If none of this makes sense to you, don’t worry - it’s not required to write a basic connector!
 
 After the request completes, you’ll have some `text` to process. At this point we can just output it with `console.log` and return the results like before.
 
-If the request can’t complete, `await sendRequest(...)` will `throw` — and because we don't catch it, the error propagates out of `load()` and Tapestry displays it in the user interface automatically. (You only need to add your own `try`/`catch` if you want to handle a failure yourself rather than report it.)
+If the request can’t complete — or the server answers with an error status — `await fetch(...)` will `throw`, and because we don't catch it, the error propagates out of `load()` and Tapestry displays it in the user interface automatically. (You only need to add your own `try`/`catch` if you want to handle a failure yourself rather than report it.)
 
 After doing **Cmd-R** and **Load**, you’ll see the document icon update because of the log message you just added. When you press that button, you’ll see something like this:
 
@@ -212,8 +212,7 @@ Those are the results from the API and we can easily put these JSON results to u
 ```javascript
 async function load() {
 	const endpoint = `${site}/api`;
-	const text = await sendRequest(endpoint);
-	const json = JSON.parse(text);
+	const json = await fetch(endpoint).json();
 
 	let uri = site;
 	let date = new Date(json.timestamp * 1000); // seconds → milliseconds
@@ -286,8 +285,7 @@ async function load() {
 	}
 	
 	const endpoint = `${site}/api`;
-	const text = await sendRequest(endpoint);
-	const json = JSON.parse(text);
+	const json = await fetch(endpoint).json();
 
 	let uri = site + `?value=${json.value}&timestamp=${json.timestamp}`;
 	let date = new Date(json.timestamp * 1000); // seconds → milliseconds
