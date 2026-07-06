@@ -6,8 +6,7 @@ if (require('tumblr-shared.js') === false) {
 }
 
 async function verify() {
-	const response = await sendRequest(`${site}/v2/communities/${communityHandle}`);
-	const json = JSON.parse(response);
+	const json = await fetch(`${site}/v2/communities/${communityHandle}`).json();
 
 	if (json.response.is_member == false) {
 		throw new Error("You are not a member of this community. Join it on Tumblr.");
@@ -77,15 +76,12 @@ async function queryTimeline(endDate) {
 
 		console.log(`==== REQUEST communityHandle = ${communityHandle}`);
 		
-		const text = await sendRequest(url, "GET");
+		const jsonObject = await fetch(url).json();
 
-		//console.log(text);
 		let firstDate = null;
 		let lastDate = null;
 		let endUpdate = false;
 
-		
-		const jsonObject = JSON.parse(text);
 		const timeline = jsonObject.response.timeline;
 		const elements = timeline.elements;
 		const nextHref = timeline._links.next.href;

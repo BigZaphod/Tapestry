@@ -2,8 +2,9 @@
 // blog.micro
 
 async function verify() {
-	const text = await sendRequest(`${site}/account/verify`, "POST", "token=__ACCESS_TOKEN__")
-	const jsonObject = JSON.parse(text);
+	// micro.blog's /account/verify wants the app token as a `token` FORM FIELD (not the bearer header, which
+	// it ignores here). `authorizedField` has the host fill that field — the connector never handles the token.
+	const jsonObject = await fetch.post(`${site}/account/verify`, { authorizedField: "token" }).json();
 
 	if (jsonObject["username"] != null) {
 		displayName = "@" + jsonObject["username"];
@@ -31,8 +32,7 @@ async function verify() {
 async function load() {
 	const filterMentions = includeMentions != "on";
 	
-	const text = await sendRequest(`${site}/posts/timeline?count=200`);
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(`${site}/posts/timeline?count=200`).json();
 	const items = jsonObject["items"];
 	var results = [];
 	for (const item of items) {
@@ -51,22 +51,21 @@ async function performAction(actionId, item, actionValue) {
 	const id = item.metadata?.id ?? actionValue;
 
 	if (actionId == "bookmark") {
-		const text = await sendRequest(`${site}/posts/favorites`, "POST", `id=${id}`)
+		await fetch.post(`${site}/posts/favorites`, { body: `id=${id}` });
 
 		item.actions.delete("bookmark");
 		item.actions.add("unbookmark");
 		return item;
 	}
 	else if (actionId == "unbookmark") {
-		const text = await sendRequest(`${site}/posts/favorites/${id}`, "DELETE")
+		await fetch.delete(`${site}/posts/favorites/${id}`);
 
 		item.actions.delete("unbookmark");
 		item.actions.add("bookmark");
 		return item;
 	}
 	else if (actionId == "replies" || actionId == "thread") {
-		const response = await sendRequest(`${site}/posts/conversation?id=${id}`)
-		const json = JSON.parse(response);
+		const json = await fetch(`${site}/posts/conversation?id=${id}`).json();
 
 		let results = [];
 		let replies = json.items;

@@ -15,16 +15,14 @@ if (require('bluesky-shared.js') === false) {
 // https://api.bsky.app/xrpc/app.bsky.feed.getListFeed?list=at%3A%2F%2Fdid%3Aplc%3A7foutw3hvd7nqwwng5gsmuez%2Fapp.bsky.graph.list%2F3lml2frpysk2j
 
 async function verify() {
-	const profileText = await sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`);
-	const profile = JSON.parse(profileText);
+	const profile = await fetch(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`).json();
 
 	const did = profile.did;
 	setItem("did", did);
 
 	const profileHandle = "@" + profile.handle;
 
-	const listText = await sendRequest(`${site}/xrpc/app.bsky.graph.getList?list=at://${did}/app.bsky.graph.list/${listId}`);
-	const listObject = JSON.parse(listText);
+	const listObject = await fetch(`${site}/xrpc/app.bsky.graph.getList?list=at://${did}/app.bsky.graph.list/${listId}`).json();
 
 	const avatar = listObject?.list?.avatar ?? listObject?.list?.creator?.avatar;
 	const listName = listObject.list.name;
@@ -52,9 +50,8 @@ async function load() {
 
 function queryList(did, listId) {
 	return new Promise((resolve, reject) => {
-		sendRequest(`${site}/xrpc/app.bsky.feed.getListFeed?list=at://${did}/app.bsky.graph.list/${listId}`)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(`${site}/xrpc/app.bsky.feed.getListFeed?list=at://${did}/app.bsky.graph.list/${listId}`).json()
+		.then((jsonObject) => {
 			
 			let results = [];
 			for (const item of jsonObject.feed) { 

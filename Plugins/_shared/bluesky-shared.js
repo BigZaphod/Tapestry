@@ -6,22 +6,19 @@ const uriPrefixContent = "https://cdn.bsky.app";
 const uriPrefixVideo = "https://video.bsky.app";
 
 async function getSessionDid() {
-	const text = await sendRequest(site + "/xrpc/com.atproto.server.getSession");
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
 	const did = jsonObject.did;
 	return did;
 }
 
 async function getAccountDid(account) {
-	const text = await sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`)
-	const jsonObject = JSON.parse(text);	
+	const jsonObject = await fetch(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`).json();
 	const did = jsonObject.did;
 	return did;
 }
 
 async function getFeedInfo(did, feedId) {
-	const text = await sendRequest(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`)
-	const jsonObject = JSON.parse(text);	
+	const jsonObject = await fetch(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json();
 	const feedName = jsonObject.view.displayName;
 	const avatar = jsonObject.view.avatar;
 	return [feedName, avatar];
@@ -583,8 +580,7 @@ function nextTid() {
 // Resolve a handle (e.g. "alice.bsky.social") to its DID, or null if it can't be resolved.
 async function resolveHandle(handle) {
 	try {
-		const text = await sendRequest(`${site}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`);
-		return JSON.parse(text).did;
+		return (await fetch(`${site}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`).json()).did;
 	} catch (error) {
 		return null;
 	}
@@ -709,11 +705,10 @@ function composeAttributes(isReply) {
 // Best-effort: the post already exists, so a gate failure is logged rather than fatal — surfacing partial failure to
 // the user is a later refinement.
 async function writeGates(attributes, did, postUri, rkey, createdAt, isReply) {
-	const extraHeaders = { "content-type": "application/json" };
 	const createGate = async (collection, record) => {
 		try {
 			const gateBody = { collection: collection, repo: did, rkey: rkey, record: record };
-			await sendRequest(`${site}/xrpc/com.atproto.repo.createRecord`, "POST", JSON.stringify(gateBody), extraHeaders);
+			await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: gateBody });
 		} catch (error) {
 			console.log(`${collection} failed (the post is still up): ${error}`);
 		}
@@ -776,11 +771,7 @@ async function performAction(actionId, target, actionValue) {
 			}
 		};
 
-		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
-		const jsonObject = JSON.parse(text);
+		const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
 		const rkey = jsonObject.uri.split("/").pop();
 
 		metadata.likeRkey = rkey;
@@ -796,11 +787,7 @@ async function performAction(actionId, target, actionValue) {
 			rkey: metadata.likeRkey
 		};
 
-		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
-		const jsonObject = JSON.parse(text);
+		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
 
 		target.actions.delete("unlike");
 		target.actions.add("like");
@@ -820,11 +807,7 @@ async function performAction(actionId, target, actionValue) {
 			}
 		};
 
-		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
-		const jsonObject = JSON.parse(text);
+		const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
 		const rkey = jsonObject.uri.split("/").pop();
 
 		metadata.repostRkey = rkey;
@@ -840,11 +823,7 @@ async function performAction(actionId, target, actionValue) {
 			rkey: metadata.repostRkey
 		};
 
-		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
-		const jsonObject = JSON.parse(text);
+		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
 
 		target.actions.delete("unrepost");
 		target.actions.add("repost");
@@ -856,10 +835,7 @@ async function performAction(actionId, target, actionValue) {
 			cid: metadata.cid
 		};
 
-		const url = `${site}/xrpc/app.bsky.bookmark.createBookmark`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		await fetch.post(`${site}/xrpc/app.bsky.bookmark.createBookmark`, { json: body });
 
 		target.actions.delete("save");
 		target.actions.add("unsave");
@@ -870,10 +846,7 @@ async function performAction(actionId, target, actionValue) {
 			uri: metadata.uri
 		};
 
-		const url = `${site}/xrpc/app.bsky.bookmark.deleteBookmark`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		const text = await sendRequest(url, "POST", parameters, extraHeaders);
+		await fetch.post(`${site}/xrpc/app.bsky.bookmark.deleteBookmark`, { json: body });
 
 		target.actions.delete("unsave");
 		target.actions.add("save");
@@ -881,8 +854,7 @@ async function performAction(actionId, target, actionValue) {
 	}
 	else if (actionId == "thread" || actionId == "replies") {
 		const uri = metadata.uri;
-		const response = await sendRequest(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`);
-		const json = JSON.parse(response);
+		const json = await fetch(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`).json();
 		const firstItem = json["thread"];
 
 		let results = [];
@@ -914,10 +886,7 @@ async function performAction(actionId, target, actionValue) {
 			repo: did,
 			rkey: metadata.uri.split("/").pop()
 		};
-		const url = `${site}/xrpc/com.atproto.repo.deleteRecord`;
-		const parameters = JSON.stringify(body);
-		const extraHeaders = { "content-type": "application/json" };
-		await sendRequest(url, "POST", parameters, extraHeaders);
+		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
 		return [Item.delete(target.uri)];
 	}
 	else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
@@ -951,8 +920,7 @@ async function performAction(actionId, target, actionValue) {
 		if (facets.length > 0) { record.facets = facets; }
 		const rkey = draft.metadata.rkey;
 		const body = { collection: "app.bsky.feed.post", repo: did, rkey: rkey, record: record };
-		const url = `${site}/xrpc/com.atproto.repo.createRecord`;
-		await sendRequest(url, "POST", JSON.stringify(body), { "content-type": "application/json" });
+		await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body });
 
 		// Reply/quote controls are separate records sharing the post's rkey (Bluesky has no atomic multi-write).
 		await writeGates(attributes, did, `at://${did}/app.bsky.feed.post/${rkey}`, rkey, createdAt, draft.metadata.parentUri != null);

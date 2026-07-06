@@ -298,7 +298,7 @@ async function getInstance() {
 	}
 
 	try {
-		const record = JSON.parse(await sendRequest(`${site}/api/v2/instance`));
+		const record = await fetch(`${site}/api/v2/instance`).json();
 		setItem("instance", JSON.stringify({ fetchedAt: Date.now(), record }));
 		return record;
 	} catch (error) {
@@ -416,7 +416,7 @@ function composeAttributes(canQuote) {
 // gone (a cached-author fallback would silently mask it). Returns a trailing-spaced string, or "".
 async function replyMentionPrefill(id) {
 	const myUserId = getItem("userId");
-	const status = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}`));
+	const status = await fetch(`${site}/api/v1/statuses/${id}`).json();
 	const participants = [status.account, ...(status.mentions ?? [])];
 	const seen = new Set();
 	const tokens = [];
@@ -436,40 +436,44 @@ async function performAction(actionId, target, actionValue) {
 	// `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
 	const id = target?.metadata?.id ?? actionValue;
 
+	// A fast unboost -> boost can 422 with "Reblog of post already exists": the unreblog's removal is processed
+	// asynchronously server-side, and the re-reblog trips the uniqueness check against the not-yet-deleted row.
+	// Deliberately NOT handled: treating it as success would disagree with the server's final (unboosted) state,
+	// and there's no timer surface to retry with. Surfacing the error is honest; a human retry succeeds.
 	if (actionId == "favorite") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/favourite`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/favourite`);
 		target.actions.delete("favorite");
 		target.actions.add("unfavorite");
 		return target;
 	}
 	else if (actionId == "unfavorite") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/unfavourite`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/unfavourite`);
 		target.actions.delete("unfavorite");
 		target.actions.add("favorite");
 		return target;
 	}
 	else if (actionId == "boost") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/reblog`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/reblog`);
 		target.actions.delete("boost");
 		target.actions.add("unboost");
 		target.annotations = [Annotation.createWithText("Boosted by you")];
 		return target;
 	}
 	else if (actionId == "unboost") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/unreblog`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/unreblog`);
 		target.actions.delete("unboost");
 		target.actions.add("boost");
 		target.annotations = [];
 		return target;
 	}
 	else if (actionId == "bookmark") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/bookmark`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/bookmark`);
 		target.actions.delete("bookmark");
 		target.actions.add("unbookmark");
 		return target;
 	}
 	else if (actionId == "unbookmark") {
-		await sendRequest(`${site}/api/v1/statuses/${id}/unbookmark`, "POST");
+		await fetch.post(`${site}/api/v1/statuses/${id}/unbookmark`);
 		target.actions.delete("unbookmark");
 		target.actions.add("bookmark");
 		return target;
@@ -478,7 +482,7 @@ async function performAction(actionId, target, actionValue) {
 		// Thread posts are quotable too — resolve the capability here so quote appears in a thread view even if this
 		// context hasn't run load() (postForItem reads `quoteCapable`). getInstance() is cached, so this is cheap.
 		quoteCapable = supportsQuotePosts(await getInstance());
-		const context = JSON.parse(await sendRequest(`${site}/api/v1/statuses/${id}/context`));
+		const context = await fetch(`${site}/api/v1/statuses/${id}/context`).json();
 		let results = [];
 		// `item` here is a raw Mastodon status from the API (as postForItem expects); `target` is our Item.
 		for (const item of context["ancestors"]) {
@@ -491,7 +495,7 @@ async function performAction(actionId, target, actionValue) {
 		return results;
 	}
 	else if (actionId == "delete") {
-		await sendRequest(`${site}/api/v1/statuses/${id}`, "DELETE");
+		await fetch.delete(`${site}/api/v1/statuses/${id}`);
 		return [Item.delete(target.uri)];
 	}
 	else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
@@ -517,11 +521,10 @@ async function performAction(actionId, target, actionValue) {
 			quote_approval_policy: (visibility == null || visibility == "public" || visibility == "unlisted") ? attributes.quotePolicy : undefined
 		};
 		const headers = {
-			"content-type": "application/json",
 			"Idempotency-Key": draft.metadata?.idempotencyKey ?? crypto.randomUUID(),
 		};
-		const response = await sendRequest(`${site}/api/v1/statuses`, "POST", JSON.stringify(body), headers);
-		return [postForItem(JSON.parse(response))];
+		const status = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
+		return [postForItem(status)];
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

@@ -6,8 +6,7 @@ if (require('mastodon-shared.js') === false) {
 }
 
 async function verify() {
-	const credentialsText = await sendRequest(site + "/api/v1/accounts/verify_credentials");
-	const credentials = JSON.parse(credentialsText);
+	const credentials = await fetch(site + "/api/v1/accounts/verify_credentials").json();
 
 	const userName = "@" + credentials["username"];
 	const icon = credentials["avatar"];
@@ -15,8 +14,7 @@ async function verify() {
 	const userId = credentials["id"];
 	setItem("userId", userId);
 
-	const listsText = await sendRequest(site + "/api/v1/lists");
-	const lists = JSON.parse(listsText);
+	const lists = await fetch(site + "/api/v1/lists").json();
 
 	const verifyList = normalizeList(list);
 	let found = false;
@@ -43,8 +41,7 @@ async function load() {
 	var listId = getItem("listId");
 
 	if (listId == null) {
-		const text = await sendRequest(site + "/api/v1/lists");
-		const jsonObject = JSON.parse(text);
+		const jsonObject = await fetch(site + "/api/v1/lists").json();
 
 		const loadList = normalizeList(list);
 		for (const listItem of jsonObject) {
@@ -65,9 +62,8 @@ async function load() {
 function queryStatusesForList(listId) {
 
 	return new Promise((resolve, reject) => {
-		sendRequest(site + "/api/v1/timelines/list/" + listId + "?limit=40")
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(site + "/api/v1/timelines/list/" + listId + "?limit=40").json()
+		.then((jsonObject) => {
 			let results = [];
 			
 			let annotation = Annotation.createWithText(`Posted in ${list}`);

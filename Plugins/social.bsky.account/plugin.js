@@ -7,8 +7,7 @@ if (require('bluesky-shared.js') === false) {
 
 async function verify() {
 	let verifyAccount = normalizeAccount(account);
-	const text = await sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${verifyAccount}`);
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + `/xrpc/app.bsky.actor.getProfile?actor=${verifyAccount}`).json();
 
 	let displayName = "";
 	if (jsonObject.displayName != null && jsonObject.displayName.length > 0) {
@@ -47,9 +46,8 @@ function queryFeedForUser(did) {
 
 	return new Promise((resolve, reject) => {
 		const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=${did}`;
-		sendRequest(url)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(url).json()
+		.then((jsonObject) => {
 			let results = [];
 			for (const item of jsonObject.feed) {
 				let post = postForItem(item, false);

@@ -8,8 +8,7 @@ if (require('mastodon-shared.js') === false) {
 async function verify() {
 	const verifyAccount = normalizeAccount(account);
 	const url = `${site}/api/v1/accounts/lookup?acct=${verifyAccount}`;
-	const text = await sendRequest(url);
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(url).json();
 
 	let displayName = "";
 	if (jsonObject.display_name != null && jsonObject.display_name.length > 0) {
@@ -39,8 +38,7 @@ async function load() {
 	if (id == null) {
 		const loadAccount = normalizeAccount(account);
 		const url = `${site}/api/v1/accounts/lookup?acct=${loadAccount}`;
-		const text = await sendRequest(url);
-		id = JSON.parse(text).id;
+		id = (await fetch(url).json()).id;
 		setItem("id", id);
 	}
 
@@ -50,9 +48,8 @@ async function load() {
 function queryStatusesForUser(id) {
 
 	return new Promise((resolve, reject) => {
-		sendRequest(site + "/api/v1/accounts/" + id + "/statuses?limit=40")
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(site + "/api/v1/accounts/" + id + "/statuses?limit=40").json()
+		.then((jsonObject) => {
 			let results = [];
 			for (const item of jsonObject) {
 				let post = null;

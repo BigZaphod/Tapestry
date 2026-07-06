@@ -6,8 +6,7 @@ if (require('mastodon-shared.js') === false) {
 }
 
 async function verify() {
-	const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + "/api/v1/accounts/verify_credentials").json();
 
 	const instance = site.split("/")[2] ?? "";
 	const accountName = jsonObject["display_name"];
@@ -27,8 +26,7 @@ var userId = getItem("userId");
 
 async function fetchFollowedTags() {
 	try {
-		const text = await sendRequest(`${site}/api/v1/followed_tags?limit=400`, "GET");
-		const jsonArray = JSON.parse(text);
+		const jsonArray = await fetch(`${site}/api/v1/followed_tags?limit=400`).json();
 		return jsonArray.map(tag => tag.name.toLowerCase());
 	}
 	catch (error) {
@@ -85,8 +83,7 @@ async function load() {
 		tasks.push((async () => {
 			console.log(`==== STATUSES START`);
 			if (userId == null) {
-				const text = await sendRequest(site + "/api/v1/accounts/verify_credentials");
-				const jsonObject = JSON.parse(text);
+				const jsonObject = await fetch(site + "/api/v1/accounts/verify_credentials").json();
 				userId = jsonObject["id"];
 				setItem("userId", userId);
 			}
@@ -128,13 +125,11 @@ function queryHomeTimeline(endDate, followedTagNames) {
 			
 			console.log(`==== REQUEST id = ${id}`);
 			
-			sendRequest(url, "GET")
-			.then((text) => {
-				//console.log(text);
+			fetch(url).json()
+			.then((jsonObject) => {
 				let lastId = null;
 				let lastDate = null;
 				let endUpdate = false;
-				const jsonObject = JSON.parse(text);
 				for (const item of jsonObject) {
 					const date = new Date(item["created_at"]);
 
@@ -224,8 +219,7 @@ function queryHomeTimeline(endDate, followedTagNames) {
 }
 
 async function queryMentions() {
-	const text = await sendRequest(site + "/api/v1/notifications?types%5B%5D=mention&limit=80", "GET");
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + "/api/v1/notifications", { params: { "types[]": "mention", limit: 80 } }).json();
 	let results = [];
 	for (const item of jsonObject) {
 		const postItem = item["status"];
@@ -238,8 +232,7 @@ async function queryMentions() {
 }
 
 async function queryStatusesForUser(id) {
-	const text = await sendRequest(site + "/api/v1/accounts/" + id + "/statuses?limit=40", "GET");
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + "/api/v1/accounts/" + id + "/statuses?limit=40").json();
 	let results = [];
 	for (const item of jsonObject) {
 		if (item.reblog != null && includeBoosts != "on") {

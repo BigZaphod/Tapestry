@@ -6,16 +6,14 @@ if (require('bluesky-shared.js') === false) {
 }
 
 async function verify() {
-	const sessionText = await sendRequest(site + "/xrpc/com.atproto.server.getSession");
-	const session = JSON.parse(sessionText);
+	const session = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
 	const username = "@" + session.handle;
 	const did = session.did;
 
 	setItem("did", did);
 	setItem("didSelf", did);
 
-	const profileText = await sendRequest(site + `/xrpc/app.bsky.actor.getProfile?actor=${did}`);
-	const profile = JSON.parse(profileText);
+	const profile = await fetch(site + `/xrpc/app.bsky.actor.getProfile?actor=${did}`).json();
 	return {
 		displayName: username,
 		accountIdentity: Identity.create(profile.displayName, username, profile.avatar)
@@ -95,16 +93,14 @@ function queryTimeline(endDate) {
 			
 			console.log(`==== REQUEST cursor = ${cursor}`);
 			
-			sendRequest(url, "GET")
-			.then((text) => {
-				//console.log(text);
+			fetch(url).json()
+			.then((jsonObject) => {
 				let firstId = null;
 				let firstDate = null;
 				let lastId = null;
 				let lastDate = null;
 				let endUpdate = false;
 
-				const jsonObject = JSON.parse(text);
 				const items = jsonObject.feed
 				for (const item of items) {
 					const post = postForItem(item, true, null, false);
@@ -178,8 +174,7 @@ function queryTimeline(endDate) {
 
 async function queryMentions() {
 	const url = `${site}/xrpc/app.bsky.notification.listNotifications?limit=100`;
-	const text = await sendRequest(url);
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(url).json();
 
 	let results = [];
 	

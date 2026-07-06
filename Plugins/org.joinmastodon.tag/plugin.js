@@ -8,8 +8,7 @@ if (require('mastodon-shared.js') === false) {
 async function verify() {
 	const verifyTag = normalizeTag(tag);
 	const url = `${site}/api/v1/timelines/tag/${verifyTag}`;
-	const text = await sendRequest(url);
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(url).json();
 
 	if (jsonObject.length > 0) {
 		return "#" + verifyTag;
@@ -28,9 +27,8 @@ function queryStatusesForTag(tag) {
 
 	return new Promise((resolve, reject) => {
 		const url = `${site}/api/v1/timelines/tag/${tag}`;
-		sendRequest(url)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(url).json()
+		.then((jsonObject) => {
 			let results = [];
 			for (const item of jsonObject) {
 				if (item.quote != null && includeQuotes != "on") {

@@ -79,16 +79,14 @@ async function queryDashboard(endDate) {
 			
 			console.log(`==== REQUEST id = ${id}, pass = ${pass}`);
 			
-			sendRequest(url, "GET")
-			.then((text) => {
-				//console.log(text);
+			fetch(url).json()
+			.then((jsonObject) => {
 				let firstId = null;
 				let firstDate = null;
 				let lastId = null;
 				let lastDate = null;
 				let endUpdate = false;
 				
-				const jsonObject = JSON.parse(text);
 				const items = jsonObject.response.posts;
 				for (const item of items) {
 					const post = postForItem(item);

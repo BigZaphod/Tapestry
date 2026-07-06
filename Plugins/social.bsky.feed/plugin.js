@@ -6,16 +6,14 @@ if (require('bluesky-shared.js') === false) {
 }
 
 async function verify() {
-	const profileText = await sendRequest(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`);
-	const profile = JSON.parse(profileText);
+	const profile = await fetch(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`).json();
 
 	const did = profile.did;
 	setItem("did", did);
 
 	const profileHandle = "@" + profile.handle;
 
-	const feedText = await sendRequest(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`);
-	const feed = JSON.parse(feedText);
+	const feed = await fetch(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json();
 
 	const feedName = feed.view.displayName;
 	const feedAvatar = feed.view.avatar;
@@ -55,9 +53,8 @@ async function load() {
 
 function queryFeedForGenerator(did, feedId, feedName, feedAvatar) {
 	return new Promise((resolve, reject) => {
-		sendRequest(`${site}/xrpc/app.bsky.feed.getFeed?feed=at://${did}/app.bsky.feed.generator/${feedId}`)
-		.then((text) => {
-			const jsonObject = JSON.parse(text);
+		fetch(`${site}/xrpc/app.bsky.feed.getFeed?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json()
+		.then((jsonObject) => {
 			
 			// NOTE: The feed generator returns items that are not ordered by time, and we need time. So we
 			// generate a timestamp for this moment in time, and subtract a second from it as we go through

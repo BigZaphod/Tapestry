@@ -63,8 +63,7 @@ async function performAction(actionId, item, actionValue) {
 		// try to get the original post to replace the reblogged post
 		let originalPost = null;
 		try {
-			const originalPostResponse = await sendRequest(originalPostUrl, "GET", null, extraHeaders);
-			const originalPostJson = JSON.parse(originalPostResponse);
+			const originalPostJson = await fetch(originalPostUrl, { headers: extraHeaders }).json();
 			const originalPostItem = originalPostJson.response;
 			originalPost = postForItem(originalPostItem);
 		}
@@ -74,8 +73,7 @@ async function performAction(actionId, item, actionValue) {
 
 		let trailPosts = [];
 		try {
-			const postResponse = await sendRequest(postUrl, "GET", null, extraHeaders);
-			const postJson = JSON.parse(postResponse);
+			const postJson = await fetch(postUrl, { headers: extraHeaders }).json();
 			const postItem = postJson.response;
 			if (originalPost == null) {
 				originalPost = postForItem(postItem);
@@ -96,8 +94,7 @@ async function performAction(actionId, item, actionValue) {
 
 		let notePosts = [];
 		try {
-			const notesResponse = await sendRequest(notesUrl, "GET", null, extraHeaders);
-			const notesJson = JSON.parse(notesResponse);
+			const notesJson = await fetch(notesUrl, { headers: extraHeaders }).json();
 			const notes = notesJson?.response.notes;
 			for (const note of notes) {
 				const post = postForNote(note);
@@ -135,14 +132,13 @@ function test(item)
 
 async function sendAction(url, parameters) {
 	const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
-	const text = await sendRequest(url, "POST", parameters, extraHeaders, true);
-	const response = JSON.parse(text);
+	const response = await fetch.post(url, { body: parameters, headers: extraHeaders }).response();
 	if (response.status == 401) {
 		raiseAuthorizationUpdate();
 		throw new Error("Tumblr authorization is invalid");
 	}
 	else {
-		return JSON.parse(response.body);
+		return await response.json();
 	}
 }
 
@@ -152,8 +148,7 @@ function raiseAuthorizationUpdate() {
 }
 
 async function getUserInfo() {
-	const text = await sendRequest(site + "/v2/user/info");
-	const jsonObject = JSON.parse(text);
+	const jsonObject = await fetch(site + "/v2/user/info").json();
 	return jsonObject.response.user;
 }
 
@@ -239,8 +234,7 @@ async function postForTrail(trail, fallbackDate) {
 		try {
 			const postUrl = `${site}/v2/blog/${trail.blog.name}/posts/${trail.post.id}`;
 			const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
-			const response = await sendRequest(postUrl, "GET", null, extraHeaders);
-			const json = JSON.parse(response);
+			const json = await fetch(postUrl, { headers: extraHeaders }).json();
 			if (json.response.timestamp != null) {
 				trailDate = new Date(json.response.timestamp * 1000);
 			}
@@ -306,8 +300,7 @@ async function postForElement(element) {
 		
 		const postUrl = `${site}/v2/blog/${blogName}/posts/${postId}`;
 		const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
-		const response = await sendRequest(postUrl, "GET", null, extraHeaders);
-		const json = JSON.parse(response);
+		const json = await fetch(postUrl, { headers: extraHeaders }).json();
 		const item = json.response;
 		let post = postForItem(item);
 		
