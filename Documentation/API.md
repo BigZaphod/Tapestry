@@ -744,14 +744,14 @@ There is also one specialized variant: **[`fetch.conditional`](#fetchconditional
 
 #### Options
 
-  * headers: `Dictionary` of `String` key/value pairs added to the request. Values are sent literally (the `Authorization` header is added for you — see [Authorization](#plugin-configjson)).
+  * headers: `Dictionary` of `String` key/value pairs added to the request; names are case-insensitive (write `content-type` or `Content-Type`, either overrides an auto-set value). Values are sent literally (the `Authorization` header is added for you — see [Authorization](#plugin-configjson)).
   * params: `Dictionary` of query parameters — each key and value is percent-encoded for you and appended to the URL's query.
   * method: `String` HTTP method, for anything the verb presets don't cover. The default is "GET".
   * **at most one** body option:
       * body: `String` sent as-is (literal — Tapestry never rewrites your body content), or a [`FileAsset`](#fileasset) whose bytes are streamed as the raw request body (its `mimeType` becomes the Content-Type unless a header overrides it).
       * json: any value — serialized with `JSON.stringify` and sent with `content-type: application/json`.
       * form: `Dictionary` — URL-encoded and sent with `content-type: application/x-www-form-urlencoded`.
-      * multipart: `Array` of parts, each `{ name, value }` (a text field) or `{ name, file, filename, contentType }` (a [`FileAsset`](#fileasset) part) — sent as `multipart/form-data`.
+      * multipart: `Array` of parts, each `{ name, value }` (a text field) or `{ name, file, filename, contentType }` (a [`FileAsset`](#fileasset) part) — sent as `multipart/form-data`. (A part's own `contentType` overrides the file's `mimeType`; the two names are deliberately different — a part header vs. the asset's media type.)
       * base64: a [`FileAsset`](#fileasset) — the body is the base64 text of the file's bytes.
   * authorizedField: `String` — the name of a form field that Tapestry fills with the account's access token. The connector never sees the token. Combines with `form`; use it for the rare service that wants the token in the request body rather than the `Authorization` header (e.g. micro.blog's `/account/verify`). See [Authorization](#authorization-and-the-access-token).
 
@@ -805,7 +805,7 @@ Your own body and header content is otherwise sent **literally** — Tapestry do
 
 ```javascript
 const post = await fetch(url).json();       // the parsed JSON body
-const text = await fetch(url).text();       // the decoded body text
+const text = await fetch(url).text();       // the decoded body text (UTF-8, with charset/8-bit fallbacks)
 const file = await fetch(url).file();       // the body kept as a FileAsset (bytes stay in the app)
 const response = await fetch(url).response();   // the whole exchange — status, headers, body accessors
 await fetch.post(url);                      // no reader — "just make sure it worked"
@@ -824,12 +824,14 @@ However many readers you touch, only ONE request is sent — and the body can be
   * statusText: `String` description of the status.
   * url: `String` — the final URL, after any redirects.
   * headers.get(name): `String` header value, case-insensitive, or `null`.
-  * text() / json(): `Promise` for the decoded body / parsed JSON (async — the body isn't read until you ask).
+  * text() / json(): `Promise` for the decoded body / parsed JSON (async — the body isn't read until you ask). Text is decoded as UTF-8, falling back to the response's declared charset and then common 8-bit encodings, so a Latin-1 or Shift-JIS feed decodes correctly rather than as mojibake.
   * file(): the body as a [`FileAsset`](#fileasset).
 
 #### FileAsset
 
-An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You receive one from `fetch(url).file()`, and you send one with the `body:`, `multipart:`, or `base64:` options.
+An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You send one with the `body:`, `multipart:`, or `base64:` options.
+
+Today a `FileAsset` comes from exactly one place: **`fetch(url).file()`** — the response body of a request, kept on disk instead of read into JavaScript. That's enough to *proxy* remote media (download from one URL, upload to another) without the bytes passing through your connector. Creating a `FileAsset` from **local content** (a user's picked photo/video) is part of the forthcoming media-attachment support and is **not available yet** — so composing a post with a locally-attached file isn't something a connector can do today.
 
   * mimeType: `String`
   * byteSize: `Number`
@@ -863,6 +865,10 @@ catch (error) {
 ```
 
 A network/transport failure (no HTTP response at all) rejects with a plain `Error`.
+
+A body that arrives but **can't be parsed** rejects too: `.json()` on a non-JSON `2xx` body rejects with a `SyntaxError` (from `JSON.parse`), and `.text()` rejects if the bytes can't be decoded. These are distinct from `HTTPError` — branch on `error.name` (`"HTTPError"` vs `"SyntaxError"`) if you need to tell "the server said no" from "the server sent gibberish."
+
+> **Token refresh is automatic.** If a request comes back with the connector's `refresh_status_code` (default `401`) and the connector has credentials, Tapestry refreshes the token and retries the request **once** before you see anything. Your code observes a `401` only if the retry *also* fails — so you don't write refresh/retry logic yourself, and you don't normally catch `401`.
 
 > **Note:** `userMessage` works on YOUR errors too: set it on any `Error` your connector throws from `verify()`, `load()`, or `performAction()`, and Tapestry shows that text to the user in alerts while `message` goes to the log.
 
