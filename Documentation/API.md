@@ -49,6 +49,8 @@ The list below summarizes what changed at each version so you can upgrade an old
   * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
   * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
 
+**Media processing.** [`imageTransform()`](#imagetransform) fits an image [`FileAsset`](#fileasset) to a set of formats and size limits — useful today for re-fitting *remote* media (such as building a link-card thumbnail from a fetched image); attaching *local* media to a post is still forthcoming.
+
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
 Connectors that do **not** set `minimum_app_version` to 2.0 or later keep all pre-2.0 behavior unchanged — including the old completion functions and `sendRequest()`/`sendConditionalRequest()` — and do not get `fetch()` or the new JavaScript environment functions.
@@ -912,6 +914,35 @@ For feed-like data sources (such as RSS), this often results in a very significa
 > **Note:** Not all web servers are correctly configured to support conditional requests. If the server doesn't send the required headers or otherwise ignores them, this behaves identically to a plain `fetch()`.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0 (available in 2.0 and all later versions). Older connectors use [`sendRequest()`](#sendrequest) and [`sendConditionalRequest()`](#sendconditionalrequest).
+
+---
+### imageTransform
+
+`imageTransform(asset, formats, options) → Promise`
+
+Fits an image [`FileAsset`](#fileasset) to a set of acceptable formats and size limits, resolving to a **new** `FileAsset` (or the same one, unchanged, if it already qualifies). The work runs off the main thread, so `await` it.
+
+Because the only `FileAsset`s available today come from [`fetch(url).file()`](#reading-the-response) — remote content; creating one from local picked media is still forthcoming — this is mainly useful for **re-fitting remote media**: download an image, fit it, and upload it. For example, building a link-card thumbnail that a server wants within certain dimensions or a byte limit.
+
+  * asset: a [`FileAsset`](#fileasset) holding an image.
+  * formats: `Array` of format-name `String`s in preference order — `"jpeg"`, `"heic"`, `"png"`, `"gif"`. If the input is already one of them it's kept; otherwise it's converted to the **first**. (Names Tapestry doesn't recognize are ignored; an empty set throws.)
+  * options: `Object` (optional):
+      * maxBytes: `Number` — the result is kept within this many bytes. Quality is lowered first (for `jpeg`/`heic`), then the image is downscaled, until it fits.
+      * maxPixels: `Number` — the longest edge is capped to this many pixels.
+      * aspectRatio: `Number` — width ÷ height; the image is center-cropped to fill it (`1.0` = square).
+
+An **animated** input is flattened to its first frame — this is an image operation. The returned asset's `mimeType` tells you the format it actually produced (handy for the Content-Type on a subsequent upload).
+
+It **throws** if the input isn't a decodable image, if no acceptable format is given, or if the byte budget can't be met even at the smallest sensible size — so the caller can fall back (for instance, posting a link card without a thumbnail).
+
+```javascript
+// Re-fit a remote image for upload: fetch it, fit it under 1 MB at ≤1024px, then send it on.
+const original = await fetch(imageUrl).file();
+const fitted = await imageTransform(original, ["jpeg", "png"], { maxBytes: 1000000, maxPixels: 1024 });
+await fetch.post(uploadUrl, { body: fitted });
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### sendRequest
