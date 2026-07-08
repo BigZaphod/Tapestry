@@ -605,16 +605,39 @@ async function buildFacets(text) {
 		facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#mention", did: did }] });
 	}
 
-	// Links: http(s) URLs. Strip trailing punctuation (and an unmatched closing paren) the greedy match grabs.
-	for (const match of text.matchAll(/(^|\s|\()(https?:\/\/[^\s]+)/g)) {
-		let url = match[2].replace(/[.,;:!?]+$/, "");
-		if (url.endsWith(")") && !url.includes("(")) { url = url.slice(0, -1); }
-		const start = byteLength(text.slice(0, match.index + match[1].length));
-		const end = start + byteLength(url);
-		facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#link", uri: url }] });
+	// Links: shared with the composer's card detection via the host `extractLinks` (NSDataDetector — bare domains
+	// included, non-web schemes filtered), so the post's link facets and the attached card recognize exactly the
+	// same URLs. `start`/`length` are UTF-16 offsets into `text`; convert to the UTF-8 byte offsets facets use.
+	for (const link of extractLinks(text)) {
+		const byteStart = byteLength(text.slice(0, link.start));
+		const byteEnd = byteStart + byteLength(text.substring(link.start, link.start + link.length));
+		facets.push({ index: { byteStart: byteStart, byteEnd: byteEnd }, features: [{ "$type": "app.bsky.richtext.facet#link", uri: link.url }] });
 	}
 
 	return facets;
+}
+
+// Build an `app.bsky.embed.external` (link card) from an already-resolved link attachment. The composer fetches
+// the Open Graph metadata (title/description/image) and hands it over on the attachment, so this no longer fetches
+// or parses the page — it only turns the supplied image URL into an uploaded blob (the attachment carries the image
+// URL, not its bytes). Failures degrade gracefully — a card without a thumbnail — and never block the post. The
+// thumb is fetched with the 2.0 `fetch()`, kept on disk as a FileAsset, and shrunk under Bluesky's blob limit with
+// `imageTransform` before upload — the bytes never enter the connector's JS.
+async function buildExternalEmbed(link) {
+	const external = { uri: link.url, title: link.title ?? link.url, description: link.subtitle ?? "" };
+
+	if (link.image != null) {
+		try {
+			const original = await fetch(link.image).file();
+			const thumb = await imageTransform(original, ["jpeg"], { maxBytes: 900000, maxPixels: 1200 });
+			const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: thumb }).json();
+			if (uploaded.blob != null) { external.thumb = uploaded.blob; }
+		} catch (error) {
+			console.log(`link card thumbnail failed: ${error}`);   // post the card without a thumbnail
+		}
+	}
+
+	return { "$type": "app.bsky.embed.external", external: external };
 }
 
 // Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
@@ -634,7 +657,17 @@ function composeDraft(actionId, target, metadata) {
 		characterUnit: "graphemes",
 		characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
 		fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
-		attributes: composeAttributes(actionId == "reply")
+		attributes: composeAttributes(actionId == "reply"),
+		// A post carries ONE embed — a link card, an image set, or a video, mutually exclusive — and may ALSO quote
+		// another post (recordWithMedia combines a quote with any one of those). So `media` and `quote` are separate
+		// slots that can coexist. Only `link` and `quote` are wired up so far; image/video join the media slot later.
+		attachments: {
+			slots: {
+				media: [ { allow: ["link"] } ],
+				quote: [ { allow: ["item"] } ]
+			},
+			combinations: [ ["media", "quote"] ]
+		}
 	};
 
 	if (actionId == "reply") {
@@ -910,11 +943,17 @@ async function performAction(actionId, target, actionValue) {
 				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
 			};
 		}
+		// Attachments: a manually-added link becomes an `external` card; a quote is a `record` embed. When both are
+		// present they combine via `recordWithMedia` (the quote is the record, the card is the media).
+		const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
+		const externalEmbed = linkAttachment != null ? await buildExternalEmbed(linkAttachment) : null;
 		if (draft.metadata.quoteUri != null) {
-			record.embed = {
-				"$type": "app.bsky.embed.record",
-				record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid },
-			};
+			const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
+			record.embed = externalEmbed != null
+				? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: externalEmbed }
+				: quoteEmbed;
+		} else if (externalEmbed != null) {
+			record.embed = externalEmbed;
 		}
 		const facets = await buildFacets(draft.body);
 		if (facets.length > 0) { record.facets = facets; }
