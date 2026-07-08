@@ -40,7 +40,9 @@ The list below summarizes what changed at each version so you can upgrade an old
 
   * the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object (for example, replying to a post).
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
+  * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
   * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
+  * [`extractLinks()`](#extractlinks) — find the web links (bare domains included) in a string, the *same* detection the composer uses to attach link cards, so a post's in-text link facets recognize exactly the URLs the card does.
 
 **Networking is unified under [`fetch()`](#fetch).** One function covers everything `sendRequest()` and `sendConditionalRequest()` did — plus JSON/form/query serialization, binary uploads, downloads kept as [`FileAsset`](#fileasset) handles, and typed errors:
 
@@ -515,6 +517,8 @@ A `[String: String]` map holding the user's current choice for each *setting att
 
 Connector-declared rules that tell the composer how to behave for this draft: which content fields it offers and how they're counted, and the *setting attributes* it presents (visibility, language, per-post permissions, …). Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
 
+**These rules describe what the composer offers the *user*, not a schema the draft must satisfy.** A build verb hands back a draft in whatever shape it likes — body, attributes, and even attachments already in place — and the rules then govern only what the user may *add*, change, and combine, and when Post enables. Omitting a rule removes that *editing* affordance without removing anything the connector pre-placed: attach a quote or an image and declare no matching attachment slot, and the content still rides along and posts — the user just can't add more of that kind. (So the same `rules` both drive the editor and, by omission, let a connector deliver ready-made content the user can't touch.)
+
 ##### rules — content fields and character counting
 
 Declares which content fields the composer offers, how each is measured/shaped, and the length limits. Counting is evaluated entirely in the app — the draft is never sent back to the connector to be measured — so you *declare* the weighting.
@@ -615,6 +619,86 @@ Each attribute has these properties:
   * **availableWhen** — `{ attribute, oneOf }`: the control is unavailable unless `attributeValues[attribute]` is one of `oneOf` — it dims and, when the user opens it, the popover explains the condition (e.g. "Available only when Visibility is Public"). This is presentational only — still guard which values you actually apply when submitting.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+##### rules — attachments
+
+`rules.attachments` declares **what a post may attach and how those attachments combine.** It is entirely
+data-driven: the app runs a generic composer against these rules — the (+) menu, what's addable at any moment, and
+whether the post can be submitted — and never hard-codes any service's rules. The connector owns the two things the
+app never touches: packing the attachments into the wire format at submit, and fitting media bytes with the
+transform functions.
+
+The **offered set is implicit** — an attachment type is offerable if and only if it appears somewhere in these
+rules. There is no separate "allowed types" list. And since these rules gate only what the *user* can do, omitting
+a type (or omitting `attachments` entirely) is how you *prevent* the user attaching that kind — while your build
+verb stays free to pre-attach it in the draft it hands back (see the editor-vs-draft note under [rules](#rules-object)).
+
+The attachment types (referenced by these flat string names):
+
+| name | is |
+|---|---|
+| `"image"` | a still image (any format) |
+| `"animation"` | silent, auto-looping motion — a GIF, APNG, or muted video |
+| `"video"` | motion **with** an audio track |
+| `"audio"` | an audio clip |
+| `"link"` | a link / website card |
+| `"poll"` | a poll |
+| `"item"` | a quoted / embedded post (put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item)) |
+
+The media names (`image` / `animation` / `video` / `audio`) are a **behavior taxonomy, deliberately
+format-agnostic** — `image` spans JPEG/HEIC/PNG, `animation` spans GIF/APNG/muted-MP4. The *container format* is
+the transform's concern, not a type. (See [`imageTransform`](#imagetransform); the `animation`/`video`/`audio`
+transforms are forthcoming.)
+
+**The shape.** Three nested levels:
+
+```js
+draft.rules.attachments = {
+  slots: {
+    // a slot is a named region of the post; its value is a list of ALTERNATIVE options (one active at a time)
+    media: [ { allow: ["image"], max: 4 }, { allow: ["video"] }, { allow: ["link"] } ],
+    quote: [ { allow: ["item"] } ]
+  },
+  // each combination is a set of slots that may be filled TOGETHER; the combinations are alternatives
+  combinations: [ ["media", "quote"] ]
+};
+```
+
+  * **option** — `{ allow: [type, …], min?, max? }` — a "box": which types may co-occur (sharing one count budget) and the total range. `min` defaults to `0`, `max` to `1`. `{ allow: ["image", "animation"], max: 4 }` = up to 4, mixed image/animation.
+  * **slot** — a *named* region (a key under `slots`) whose value is a list of **alternative** options, exactly one active at a time. The `media` slot above means "up to 4 images, **or** one video, **or** one link."
+  * **combination** — an entry in `combinations`: a set of slot names that may be filled **together**. The combinations are alternatives — the post is valid when its attachments fit within a **single** combination (each filled slot named in it, and each active option's `min`/`max` satisfied). `[["media", "quote"]]` lets a media attachment and a quote coexist.
+
+Two worked examples:
+
+```js
+// Bluesky — one embed (≤4 images, OR one video, OR one link card), and a post may ALSO quote another
+// (recordWithMedia), so quote + one media coexist:
+attachments: {
+  slots: { media: [ {allow:["image"], max:4}, {allow:["video"]}, {allow:["link"]} ],
+           quote: [ {allow:["item"]} ] },
+  combinations: [ ["media", "quote"] ]
+}
+
+// Mastodon — up to 4 mixed image/animation, OR one video alone, OR one audio alone, plus a poll alongside media;
+// a quote is gated off both (matching the official client):
+attachments: {
+  slots: { media: [ {allow:["image","animation"], max:4}, {allow:["video"]}, {allow:["audio"]} ],
+           poll:  [ {allow:["poll"]} ],
+           item:  [ {allow:["item"]} ] },
+  combinations: [ ["media", "poll"], ["item"] ]
+}
+```
+
+Offering a `link` slot also turns on the composer's built-in **link-card auto-discovery** — as the user types or
+pastes a URL, the app detects it (bare domains included) and attaches a card, using the same detection as
+[`extractLinks`](#extractlinks) so the card and the post's link facets agree. See the connector guide for the
+end-to-end link-card flow.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0. These rules parse and round-trip for every type today,
+> but the composer's end-to-end support currently covers `link` and `item` (quote); the media pickers
+> (`image` / `animation` / `video` / `audio`) and `poll` editor arrive in a later version — declaring them now is
+> forward-compatible but not yet pickable. Per-type policy rules (alt-text requirements, poll shape) are likewise
+> forthcoming.
 
 ---
 ## Interface Functions
@@ -1255,6 +1339,23 @@ If `minimum_app_version` is unspecified or below `1.3`, this synchronously retur
 The `Object` representation contains the HTML’s properties. These values can be used to generate link previews or enhance the content without scraping the markup.
 
 > **Compatibility:** Returns a `Promise` when `minimum_app_version` >= 1.3; synchronous below that.
+
+---
+### extractLinks
+
+`extractLinks(text) → Array`
+
+  * text: `String` to scan for web links.
+
+Returns an `Array` of the web links found in `text`, in order. Each element is an `Object`:
+
+  * `url`: `String` — the canonical link URL. Bare domains (e.g. `iconfactory.com`) are recognized and returned with an `https://` scheme; scheme and host are lowercased. Non-web matches (email / `mailto:`, `ftp:`, etc.) are excluded.
+  * `start`: `Number` — the UTF-16 offset of the matched (visible) text within `text`.
+  * `length`: `Number` — the UTF-16 length of the matched text.
+
+This is the same link detection the composer uses to auto-discover link-card attachments, so a post’s in-text link facets and its attached card recognize exactly the same URLs. `start` / `length` index the string the way JavaScript does, so `text.substring(start, start + length)` gives the visible link text, from which you can compute the UTF-8 byte offsets that richtext facets require.
+
+> **Availability:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### setItem
