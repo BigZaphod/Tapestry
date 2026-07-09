@@ -7,7 +7,10 @@ if (require('bluesky-shared.js') === false) {
 
 async function verify() {
 	const session = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
-	const username = "@" + session.handle;
+	// The full handle is kept for accountIdentity so the timeline's "via" label can still disambiguate
+	// accounts when needed; the feed name uses the shortened form.
+	const fullUsername = "@" + session.handle;
+	const username = "@" + shortHandle(session.handle);
 	const did = session.did;
 
 	setItem("did", did);
@@ -16,7 +19,7 @@ async function verify() {
 	const profile = await fetch(site + `/xrpc/app.bsky.actor.getProfile?actor=${did}`).json();
 	return {
 		displayName: username,
-		accountIdentity: Identity.create(profile.displayName, username, profile.avatar)
+		accountIdentity: Identity.create(profile.displayName, fullUsername, profile.avatar)
 	};
 }
 

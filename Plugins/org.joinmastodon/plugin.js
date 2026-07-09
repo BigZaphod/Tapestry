@@ -10,14 +10,18 @@ async function verify() {
 
 	const instance = site.split("/")[2] ?? "";
 	const accountName = jsonObject["display_name"];
-	const fullUsername = "@" + jsonObject["username"] + "@" + instance;
+	const username = "@" + jsonObject["username"];
+	// The instance-qualified handle is kept for accountIdentity so the timeline's "via" label can still
+	// tell apart two accounts with the same username on different instances. The feed name itself uses the
+	// short form, since that disambiguation is only needed in that one spot.
+	const fullUsername = username + "@" + instance;
 	const icon = jsonObject["avatar"];
 
 	const userId = jsonObject["id"];
 	setItem("userId", userId);
 
 	return {
-		displayName: fullUsername,
+		displayName: username,
 		accountIdentity: Identity.create(accountName, fullUsername, icon)
 	};
 }

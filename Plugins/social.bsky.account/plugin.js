@@ -14,7 +14,7 @@ async function verify() {
 		displayName = jsonObject.displayName;
 	}
 	else {
-		displayName = "@" + jsonObject.handle;
+		displayName = "@" + shortHandle(jsonObject.handle);
 	}
 
 	const did = jsonObject.did;

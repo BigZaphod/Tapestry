@@ -11,7 +11,7 @@ async function verify() {
 	const did = profile.did;
 	setItem("did", did);
 
-	const profileHandle = "@" + profile.handle;
+	const profileHandle = "@" + shortHandle(profile.handle);
 
 	const feed = await fetch(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json();
 

@@ -20,7 +20,7 @@ async function verify() {
 	const did = profile.did;
 	setItem("did", did);
 
-	const profileHandle = "@" + profile.handle;
+	const profileHandle = "@" + shortHandle(profile.handle);
 
 	const listObject = await fetch(`${site}/xrpc/app.bsky.graph.getList?list=at://${did}/app.bsky.graph.list/${listId}`).json();
 

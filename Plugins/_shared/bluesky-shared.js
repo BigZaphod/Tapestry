@@ -32,6 +32,13 @@ function normalizeAccount(account) {
 	return result;
 }
 
+// Bluesky handles are domains, so we can only shorten the default "*.bsky.social" ones by dropping that
+// suffix. Custom-domain handles (e.g. "sean.foo") are left whole. Used for feed names; the full handle is
+// kept elsewhere (e.g. accountIdentity) when disambiguation still matters.
+function shortHandle(handle) {
+	return handle.replace(/\.bsky\.social$/, "");
+}
+
 function parentsForItem(item, includeActions) {
 	let results = [];
 	if (item.parent != null) {
