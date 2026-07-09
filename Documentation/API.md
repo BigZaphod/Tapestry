@@ -540,7 +540,7 @@ draft.rules = {
                 "(@\\w+)(@[\\w.-]+)?": "$1"         // a mention counts only "@user" — the @domain is free
             }
         },
-        contentWarning: { availability: "hidden", placeholder: "Write your warning here" }
+        contentWarning: { availability: "optional", placeholder: "Write your warning here" }
     }
 };
 ```
@@ -551,11 +551,10 @@ draft.rules = {
     * **weights** — a regex mapped to a number (a fixed cost — a URL = 23) or `"$N"` (the length of capture group *N* — counting only a mention's `@user`). It applies to *this field only*, so a URL in a content warning isn't weighted like one in the body. Overlaps resolve leftmost-first (longest on a tie), so order doesn't matter.
     * **characterLimit** — an independent `{ maxLength?, maxBytes? }` cap on just this field (a title ≤ 100), separate from `characterCounter`.
     * **placeholder** — the prompt shown in the field's editor while it's empty (e.g. `"What's on your mind?"`, or `"Post your reply"` for a reply). Omit for the composer's own default.
-    * **availability** — one word for how the composer offers the field (default `"always"`):
+    * **availability** — one word for how the composer offers the field, in order of insistence (default `"always"`):
         * `"always"` — shown and cannot be hidden; but the user may leave it empty.
         * `"required"` — always shown *and* mandatory; a submit is blocked if it's empty.
-        * `"shown"` — shown by default, but the user can toggle it off and leave it empty.
-        * `"hidden"` — hidden by default, but the user can toggle it on to fill it in.
+        * `"optional"` — opt-in: hidden by default and the user toggles it on to fill it in. It reveals itself automatically when the draft already carries a value (e.g. a reply that inherited the parent's content warning).
 
 ##### rules — setting attributes
 

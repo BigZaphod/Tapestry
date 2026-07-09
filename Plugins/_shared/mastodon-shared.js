@@ -142,11 +142,14 @@ function postForItem(item) {
 
 	post.shortcodes = shortcodes;
 
-	// Carry the post's visibility and language so a reply can default to them (Mastodon doesn't inherit either
-	// server-side — the composer replicates the web client: default a reply to the parent's visibility, never wider,
-	// and prefill its language). `item` here is the displayed post (a boost was already unwrapped above).
+	// Carry the post's visibility, language, and content warning so a reply can default to them (Mastodon doesn't
+	// inherit any of them server-side — the composer replicates the web client: default a reply to the parent's
+	// visibility, never wider, prefill its language, and carry over its content warning). `item` here is the
+	// displayed post (a boost was already unwrapped above). Only the author-written spoiler carries over — a bare
+	// `sensitive` flag has no text to prefill and the web client doesn't propagate it to replies either.
 	post.metadata = { id: item.id, visibility: item["visibility"] ?? "public" };
 	if (item["language"] != null) { post.metadata.language = item["language"]; }
+	if (spoilerText != null && spoilerText.length > 0) { post.metadata.contentWarning = spoilerText; }
 
 	post.actions.add("reply");
 
@@ -349,7 +352,7 @@ async function composeDraft(actionId, target, id) {
 					"(?<![=/\\w])(@\\w+(?:[.-]+\\w+)*)(?:@[\\w.-]+)?": "$1"
 				}
 			},
-			contentWarning: { availability: "hidden" }   // starts hidden; the user reveals it to add a warning
+			contentWarning: { availability: "optional" }   // opt-in; the user reveals it to add a warning
 		},
 		attributes: composeAttributes(canQuote)
 	};
@@ -359,9 +362,12 @@ async function composeDraft(actionId, target, id) {
 		draft.body = await replyMentionPrefill(id);
 		draft.context = [target];
 		draft.metadata.replyTo = id;
-		// Inherit the parent's visibility/language where the item carried them (best-effort).
+		// Inherit the parent's visibility/language/content warning where the item carried them (best-effort). Setting
+		// draft.contentWarning is enough to surface the field — the composer auto-reveals a hidden content field whose
+		// value is non-empty — and `send` re-applies it as spoiler_text + sensitive.
 		if (target?.metadata?.visibility != null) { draft.attributeValues.visibility = target.metadata.visibility; }
 		if (target?.metadata?.language != null) { draft.attributeValues.language = target.metadata.language; }
+		if (target?.metadata?.contentWarning != null) { draft.contentWarning = target.metadata.contentWarning; }
 	} else if (actionId == "quote") {
 		// A quote is a new top-level post embedding another. The full item rides `attachments` for the composer
 		// preview; the status id used to build the quote at send rides `metadata`, like the reply ref.

@@ -231,6 +231,22 @@ function postForNotification(notification, annotationLabel) {
     if (contentWarning != null) {
         post.contentWarning = contentWarning;
     }
-        
+
+    // Carry the same reply refs postForItem stamps, so a reply built from a notification-sourced item has a valid
+    // parent + thread root (and prefilled language) instead of nothing. A notification doesn't add a reply action
+    // today; this just keeps the metadata correct if it ever does. The root comes from the record's own reply ref
+    // (this post's thread root); a top-level post is its own root.
+    let metadata = { uri: notification.uri, cid: notification.cid };
+    const replyRoot = notification.record.reply?.root;
+    if (replyRoot?.uri != null && replyRoot?.cid != null) {
+        metadata.rootUri = replyRoot.uri;
+        metadata.rootCid = replyRoot.cid;
+    } else {
+        metadata.rootUri = notification.uri;
+        metadata.rootCid = notification.cid;
+    }
+    if (notification.record?.langs?.[0] != null) { metadata.language = notification.record.langs[0]; }
+    post.metadata = metadata;
+
     return post;
 }
