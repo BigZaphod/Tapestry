@@ -41,6 +41,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object (for example, replying to a post).
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
   * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
+  * connector-declared **emoji shortcodes** — a set of custom emoji powering the composer's built-in `:`-autocomplete — via [`draft.rules.shortcodes`](#rules--emoji-shortcodes).
   * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
   * [`extractLinks()`](#extractlinks) — find the web links (bare domains included) in a string, the *same* detection the composer uses to attach link cards, so a post's in-text link facets recognize exactly the URLs the card does.
 
@@ -698,6 +699,34 @@ end-to-end link-card flow.
 > (`image` / `animation` / `video` / `audio`) and `poll` editor arrive in a later version — declaring them now is
 > forward-compatible but not yet pickable. Per-type policy rules (alt-text requirements, poll shape) are likewise
 > forthcoming.
+
+##### rules — emoji shortcodes
+
+`rules.shortcodes` offers a set of **custom emoji** to the composer's built-in `:`-autocomplete. As the user types a
+`:name` token the app matches it against this list *locally* and shows a scrollable menu of matches with their images;
+picking one inserts the plain `:shortcode:` text, which the service renders to the emoji on display. It is a **bounded
+local set** — the connector hands over the whole list up front, so there is no per-keystroke lookup and no verb
+involved. (Declare it in the same build verb that sets the rest of `rules`; for a Mastodon-style service, source it
+from the instance's custom-emoji list.)
+
+```javascript
+draft.rules.shortcodes = [
+    { shortcode: "blobcat", url: "https://example.social/emoji/blobcat.png", category: "Blobs" },
+    { shortcode: "party",   url: "https://example.social/emoji/party.gif" }
+    // …
+];
+```
+
+  * **shortcode** — the name between the colons (`blobcat` for `:blobcat:`). Required.
+  * **url** — the emoji image, shown in the autocomplete menu (and matching what the service renders `:shortcode:` to). Required; an entry with no valid URL is dropped.
+  * **category** — an optional grouping label, reserved for a future emoji picker; the autocomplete ignores it.
+
+Omitting `shortcodes` (or leaving it empty) leaves the `:` trigger **inactive** — appropriate for a service that has
+no custom emoji (e.g. one using plain Unicode emoji only). This is the compose-side counterpart to an item's
+[`shortcodes`](#shortcodes-dictionary) map, which renders custom emoji in *received* content; both typically come from
+the same source.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ## Interface Functions

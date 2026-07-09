@@ -310,6 +310,31 @@ async function getInstance() {
 	}
 }
 
+// The instance's custom emoji, mapped to the composer's `rules.shortcodes` shape for `:`-autocomplete — a bounded
+// local set, so no suggest() verb is involved. Only picker-visible emoji are offered, keyed to their static image.
+// Soft 1-week TTL like the instance record (custom emoji change rarely); a failed fetch degrades to stale cache, else
+// an empty list, so composing never blocks on it (and an empty list just means the `:` trigger stays inactive).
+async function getCustomEmojis() {
+	const TTL = 7 * 24 * 60 * 60 * 1000;   // one week
+	const cached = getItem("customEmojis");
+	const stored = cached != null ? JSON.parse(cached) : null;
+	if (stored != null && Date.now() - stored.fetchedAt < TTL) {
+		return stored.shortcodes;   // still fresh — no fetch
+	}
+
+	try {
+		const emojis = await fetch(`${site}/api/v1/custom_emojis`).json();
+		const shortcodes = emojis
+			.filter(emoji => emoji.visible_in_picker !== false)
+			.map(emoji => ({ shortcode: emoji.shortcode, url: emoji.static_url ?? emoji.url, category: emoji.category }));
+		setItem("customEmojis", JSON.stringify({ fetchedAt: Date.now(), shortcodes }));
+		return shortcodes;
+	} catch (error) {
+		console.log(`getCustomEmojis fetch failed, using ${stored != null ? "stale cache" : "none"}: ${error}`);
+		return stored?.shortcodes ?? [];
+	}
+}
+
 // Whether the current (authenticated) instance can author quote posts (Mastodon 4.5+ / API v7). Resolved ONCE per
 // load (see load) and cached module-side so every postForItem path — home/mentions/statuses, the thread action, and
 // the just-posted item — offers the quote action consistently, without threading a flag through each call site. A
@@ -334,6 +359,7 @@ async function composeDraft(actionId, target, id) {
 	const instance = await getInstance();
 	const statuses = instance?.configuration?.statuses;
 	const canQuote = supportsQuotePosts(instance);
+	const shortcodes = await getCustomEmojis();   // the instance's custom emoji, for `:`-autocomplete
 	draft.rules = {
 		characterUnit: "graphemes",
 		// The main counter's limit (default 500) spans the body AND the content warning — both count against it.
@@ -354,7 +380,8 @@ async function composeDraft(actionId, target, id) {
 			},
 			contentWarning: { availability: "optional" }   // opt-in; the user reveals it to add a warning
 		},
-		attributes: composeAttributes(canQuote)
+		attributes: composeAttributes(canQuote),
+		shortcodes: shortcodes
 	};
 
 	if (actionId == "reply") {
