@@ -381,7 +381,10 @@ async function composeDraft(actionId, target, id) {
 			contentWarning: { availability: "optional" }   // opt-in; the user reveals it to add a warning
 		},
 		attributes: composeAttributes(canQuote),
-		shortcodes: shortcodes
+		shortcodes: shortcodes,
+		// `@` mentions and `#` hashtags autocomplete through the suggest() verb (account/hashtag search). `:` emoji is
+		// served by the shortcodes above, not here.
+		suggestions: ["@", "#"]
 	};
 
 	if (actionId == "reply") {
@@ -460,6 +463,85 @@ async function replyMentionPrefill(id) {
 		tokens.push("@" + person.acct);
 	}
 	return tokens.length > 0 ? tokens.join(" ") + " " : "";
+}
+
+// The suggest() verb: autocomplete for the markers the composer declares (rules.suggestions, set in composeDraft).
+// `match` is the whole token as typed, marker included ("@ali", "#swi"); we branch on the marker and return rows the
+// composer shows verbatim. Each row's insertText is the bare mention/hashtag — the composer appends the trailing space
+// itself. A bare "@"/"#" (no query yet) returns nothing rather than dumping a huge list. Failures just propagate: the
+// host logs a failed lookup and shows no rows, so there's nothing to catch here.
+async function suggest(match) {
+	const marker = match[0];
+	const query = match.slice(1);   // drop the marker; "" for a bare "@" / "#"
+	if (marker === "@") { return await suggestAccounts(query); }
+	if (marker === "#") { return await suggestHashtags(query); }
+	return [];
+}
+
+// Account autocomplete via /api/v1/accounts/search (authenticated). We rely on the endpoint's default of NOT resolving
+// unknown handles: leaving `resolve` off means no per-keystroke WebFinger fetch — only locally known accounts are
+// searched. `acct` is "user" locally or "user@domain" for a remote account — exactly the mention text to insert.
+async function suggestAccounts(query) {
+	if (query.length === 0) { return []; }
+	const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
+	return accounts.map(account => ({
+		id: account.id,
+		display: "@" + account.acct,
+		detail: account.display_name || account.username,
+		avatar: account.avatar,
+		insertText: "@" + account.acct
+	}));
+}
+
+// Hashtag autocomplete via /api/v2/search?type=hashtags (authenticated). Hashtags carry no avatar (the composer falls
+// back to a symbol). The server's `tag.name` is often LOWERCASED (mastodon.social returns "tapestryapp" for what its
+// own web UI shows as "TapestryApp") — because that mixed casing comes from each user's LOCAL tag history, not the
+// API. So we do the same: a most-recent-first history of tags YOU'VE posted (with your casing) is merged ahead of the
+// server results and deduped case-insensitively, so a tag you use shows with your casing. See rememberHashtags.
+async function suggestHashtags(query) {
+	if (query.length === 0) { return []; }
+	const results = await fetch(`${site}/api/v2/search?q=${encodeURIComponent(query)}&type=hashtags`).json();
+	const history = historyHashtags(query);
+	const seen = new Set(history.map(tag => tag.toLowerCase()));
+	const names = [...history];
+	for (const tag of (results.hashtags ?? [])) {
+		if (!seen.has(tag.name.toLowerCase())) { seen.add(tag.name.toLowerCase()); names.push(tag.name); }
+	}
+	return names.map(name => ({ display: "#" + name, insertText: "#" + name }));
+}
+
+// A most-recent-first history of hashtags posted FROM Tapestry, preserving the casing the user typed — the same trick
+// the Mastodon web composer uses (the server's search can't provide it; the casing lives in each user's own history).
+// Deduped case-insensitively and capped. Stored SYNCED (setItem/getItem `synced: true`) so it follows the account
+// across the user's devices via iCloud. Best-effort: on an app without synced storage it just falls back to local, and
+// a hiccup here must NEVER fail a post that already succeeded, hence the catch (unlike suggest, which lets errors
+// propagate to the host).
+const TAG_HISTORY_MAX = 100;
+
+function rememberHashtags(text) {
+	try {
+		const used = [...(text ?? "").matchAll(/(?<![^\s])[#＃]([\p{L}\p{N}_]+)/gu)].map(match => match[1]);
+		if (used.length === 0) { return; }
+		let history = JSON.parse(getItem("tagHistory", true) ?? "[]");
+		for (const tag of used.reverse()) {   // reverse so the first tag typed ends up nearest the front
+			history = history.filter(existing => existing.toLowerCase() !== tag.toLowerCase());
+			history.unshift(tag);
+		}
+		setItem("tagHistory", JSON.stringify(history.slice(0, TAG_HISTORY_MAX)), true);
+	} catch (error) {
+		console.log(`rememberHashtags failed (non-fatal): ${error}`);
+	}
+}
+
+// The remembered tags whose casing-insensitive prefix matches what the user is typing — merged ahead of the API
+// results by suggestHashtags. Degrades to none on any storage/parse hiccup (a real fallback: the API still answers).
+function historyHashtags(query) {
+	try {
+		const lowerQuery = query.toLowerCase();
+		return JSON.parse(getItem("tagHistory", true) ?? "[]").filter(tag => tag.toLowerCase().startsWith(lowerQuery));
+	} catch (error) {
+		return [];
+	}
 }
 
 async function performAction(actionId, target, actionValue) {
@@ -557,6 +639,7 @@ async function performAction(actionId, target, actionValue) {
 			"Idempotency-Key": draft.metadata?.idempotencyKey ?? crypto.randomUUID(),
 		};
 		const status = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
+		rememberHashtags(draft.body);   // remember the tags you just used (with your casing) for future autocomplete
 		return [postForItem(status)];
 	}
 	else {
