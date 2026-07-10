@@ -42,6 +42,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
   * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
   * connector-declared **emoji shortcodes** — a set of custom emoji powering the composer's built-in `:`-autocomplete — via [`draft.rules.shortcodes`](#rules--emoji-shortcodes).
+  * connector-declared **autocomplete markers** (`@`, `#`) that drive live mention/hashtag suggestions through the new [`suggest()`](#suggest) verb — via [`draft.rules.suggestions`](#rules--suggestion-markers).
   * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
   * [`extractLinks()`](#extractlinks) — find the web links (bare domains included) in a string, the *same* detection the composer uses to attach link cards, so a post's in-text link facets recognize exactly the URLs the card does.
 
@@ -728,6 +729,28 @@ the same source.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
+##### rules — suggestion markers
+
+`rules.suggestions` lists the **marker characters** (such as `@` and `#`) that trigger connector-driven autocomplete
+through the [`suggest()`](#suggest) verb. As the user types a word beginning with a declared marker at a word boundary,
+the app calls `suggest()` with that token and shows the returned rows; picking one replaces the token. Unlike
+[`shortcodes`](#rules--emoji-shortcodes) — a bounded local set the app filters itself — these results come live from
+the connector as the user types.
+
+```javascript
+draft.rules.suggestions = ["@", "#"];
+```
+
+Each entry is a **single, non-alphanumeric** character — a symbol/punctuation prefix like `@` or `#`. The composer
+ignores anything else (a multi-character string, or a letter/digit in any language), so autocomplete can only ever fire
+on a token the user *deliberately* began with a marker, never on ordinary prose. `:` is served by
+[`shortcodes`](#rules--emoji-shortcodes) first: a `:` marker declared here is consulted only when shortcodes are absent
+or don't match the typed query.
+
+Omitting `suggestions` (or leaving it empty) means no connector-driven autocomplete.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 ---
 ## Interface Functions
 
@@ -836,6 +859,46 @@ async function performAction(actionId, target, actionValue) {
 ```
 
 See the section on `actions.json` for more information on how to define and perform actions.
+
+---
+### suggest
+
+`suggest(match) → Array of suggestions`
+
+Called as the user types an autocomplete token beginning with one of the markers declared in
+[`rules.suggestions`](#rules--suggestion-markers). Return the rows to offer; the composer shows them **verbatim** (in
+your order, with no further filtering) and, when the user picks one, replaces the typed token with that row's
+`insertText`.
+
+  * match: A `String` — the whole token as typed, marker included (`"@ali"`, `"#swi"`). A bare marker with no query yet (`"@"`) is passed too, so a connector can offer something for it (e.g. names already in the reply) or just return an empty array.
+
+Return an `Array` of suggestion objects — an empty array means "nothing to offer":
+
+```javascript
+async function suggest(match) {
+    if (match[0] !== "@") { return []; }
+    const query = match.slice(1);   // drop the marker
+    if (query.length === 0) { return []; }
+    const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
+    return accounts.map(account => ({
+        display: "@" + account.acct,       // primary line (required)
+        insertText: "@" + account.acct,    // replaces the typed token (required)
+        detail: account.display_name,      // optional secondary line
+        avatar: account.avatar,            // optional leading image
+        id: account.id                     // optional stable identifier
+    }));
+}
+```
+
+  * **display** — the primary text shown for the row (e.g. `@alice`). Required.
+  * **insertText** — the text that replaces the typed token when the row is picked. Required. The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`).
+  * **detail** — an optional secondary line (a display name, a post count).
+  * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
+  * **id** — an optional stable identifier for the pick (an account id), carried for later use.
+
+`suggest()` is **best-effort** and fired on every keystroke, so it should return quickly. It does **not** need to guard its own errors: a thrown failure is logged by the host and simply shows no rows — it never interrupts composing. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ## Utility Functions
@@ -1388,28 +1451,34 @@ This is the same link detection the composer uses to auto-discover link-card att
 ---
 ### setItem
 
-`setItem(key, value)`
+`setItem(key, value, synced)`
 
-  * key: `String` a key for value being stored.
-  * value: `String` to be saved in local storage.
-  
-Items can be removed from local storage by passing a `null` value. The amount of local storage is limited to 100,000 total characters and any items set beyond that threshold will be ignored.
-  
+  * key: `String` a key for the value being stored.
+  * value: `String` to be saved (pass `null` to remove the key).
+  * synced: `Boolean` (optional, default `false`). When `true`, the value is written to the feed's **synced** store — a cloud-backed store that follows the account across the user's devices via iCloud — instead of the local, device-only store. The two are independent namespaces.
+
+Items can be removed by passing a `null` value. Each store (local and synced) is limited to 100,000 total characters; a write that would exceed the cap is ignored. Synced storage is best-effort — treat it as a cache that can be cleared or arrive from another device — and it's for small values (a set of preferences, a short history), not bulk data.
+
+> **Compatibility:** The `synced` argument requires `minimum_app_version` >= 2.0; older connectors get local storage only (a stray third argument is ignored).
+
 ---
 ### getItem
 
-`getItem(key) → String`
+`getItem(key, synced) → String`
 
-  * key: `String` a key for value that was stored.
-  
-Returns a `String` that was saved in local storage. If no value was stored, `null` is returned.
+  * key: `String` a key for the value that was stored.
+  * synced: `Boolean` (optional, default `false`). Reads the **synced** store when `true`. It must match the store the value was written with — there is no fallback between local and synced.
+
+Returns the `String` that was saved for that key in that store, or `null` if none.
+
+> **Compatibility:** The `synced` argument requires `minimum_app_version` >= 2.0.
 
 ---
 ### clearItems
 
 `clearItems()`
 
-All items in local storage are removed.
+All items in the feed's storage are removed — both the local and synced stores.
 
 ---
 ### crypto.randomUUID
