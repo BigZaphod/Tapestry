@@ -665,6 +665,9 @@ function composeDraft(actionId, target, metadata) {
 		characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
 		fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
 		attributes: composeAttributes(actionId == "reply"),
+		// @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so
+		// `#` isn't offered.
+		suggestions: ["@"],
 		// A post carries ONE embed — a link card, an image set, or a video, mutually exclusive — and may ALSO quote
 		// another post (recordWithMedia combines a quote with any one of those). So `media` and `quote` are separate
 		// slots that can coexist. Only `link` and `quote` are wired up so far; image/video join the media slot later.
@@ -770,6 +773,31 @@ async function writeGates(attributes, did, postUri, rkey, createdAt, isReply) {
 	if (attributes.allowQuotes === "off") {
 		await createGate("app.bsky.feed.postgate", { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] });
 	}
+}
+
+// The suggest() verb: @-mention autocomplete for the composer. `match` is the whole token as typed, marker included
+// ("@ali"); each row's insertText is the bare "@handle" the composer inserts (and buildFacets resolves to a DID at
+// send). A bare "@" (no query yet) returns nothing rather than dumping a list. Errors propagate — the host logs the
+// failed lookup and shows no rows, so there's nothing to catch here.
+async function suggest(match) {
+	const marker = match[0];
+	const query = match.slice(1);   // drop the marker; "" for a bare "@"
+	if (marker === "@") { return await suggestAccounts(query); }
+	return [];
+}
+
+// Actor typeahead via app.bsky.actor.searchActorsTypeahead. `handle` is the full domain handle ("alice.bsky.social")
+// — exactly the mention text to insert; displayName may be absent (the composer falls back to the handle).
+async function suggestAccounts(query) {
+	if (query.length === 0) { return []; }
+	const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
+	return (result.actors ?? []).map(actor => ({
+		id: actor.did,
+		display: "@" + actor.handle,
+		detail: actor.displayName,
+		avatar: actor.avatar,
+		insertText: "@" + actor.handle
+	}));
 }
 
 async function performAction(actionId, target, actionValue) {
