@@ -498,16 +498,32 @@ async function suggestAccounts(query) {
 // own web UI shows as "TapestryApp") — because that mixed casing comes from each user's LOCAL tag history, not the
 // API. So we do the same: a most-recent-first history of tags YOU'VE posted (with your casing) is merged ahead of the
 // server results and deduped case-insensitively, so a tag you use shows with your casing. See rememberHashtags.
+// The API's tag.history gives recent-usage counts, surfaced as each row's detail line (keyed by lowercased name, so a
+// history-cased tag still picks up the server's count); history-only tags with no API match show no count.
 async function suggestHashtags(query) {
 	if (query.length === 0) { return []; }
 	const results = await fetch(`${site}/api/v2/search?q=${encodeURIComponent(query)}&type=hashtags`).json();
 	const history = historyHashtags(query);
 	const seen = new Set(history.map(tag => tag.toLowerCase()));
 	const names = [...history];
+	const details = new Map();
 	for (const tag of (results.hashtags ?? [])) {
+		details.set(tag.name.toLowerCase(), usageDetail(tag));
 		if (!seen.has(tag.name.toLowerCase())) { seen.add(tag.name.toLowerCase()); names.push(tag.name); }
 	}
-	return names.map(name => ({ display: "#" + name, insertText: "#" + name }));
+	return names.map(name => {
+		const detail = details.get(name.toLowerCase());
+		return detail ? { display: "#" + name, insertText: "#" + name, detail } : { display: "#" + name, insertText: "#" + name };
+	});
+}
+
+// A hashtag's recent activity as a short row detail — the exact total posts across the ~7 daily buckets in tag.history
+// (uses arrives as a string), digit-grouped for the user's locale via toLocaleString (JSC's Intl gives 1,234,567 /
+// 1.234.567 / 12,34,567 as appropriate). Undefined when the API reports no activity, so the row omits the line.
+function usageDetail(tag) {
+	const total = (tag.history ?? []).reduce((sum, day) => sum + (Number(day.uses) || 0), 0);
+	if (total === 0) { return undefined; }
+	return `${total.toLocaleString()} recent ${total === 1 ? "post" : "posts"}`;
 }
 
 // A most-recent-first history of hashtags posted FROM Tapestry, preserving the casing the user typed — the same trick
