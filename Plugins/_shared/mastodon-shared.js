@@ -384,7 +384,17 @@ async function composeDraft(actionId, target, id) {
 		shortcodes: shortcodes,
 		// `@` mentions and `#` hashtags autocomplete through the suggest() verb (account/hashtag search). `:` emoji is
 		// served by the shortcodes above, not here.
-		suggestions: ["@", "#"]
+		suggestions: ["@", "#"],
+		// Up to 4 images. usesUploadAttachment:false — the send verb does the /v2/media upload itself rather than the
+		// app pre-uploading each one. A quote (when the instance supports it) is its own combination, so it stays
+		// postable but isn't mixed with media (matches quote-alone behavior).
+		attachments: {
+			slots: canQuote
+				? { media: [{ allow: ["image"], max: 4 }], quote: [{ allow: ["item"] }] }
+				: { media: [{ allow: ["image"], max: 4 }] },
+			combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
+		},
+		media: { usesUploadAttachment: false }
 	};
 
 	if (actionId == "reply") {
@@ -560,6 +570,26 @@ function historyHashtags(query) {
 	}
 }
 
+// Upload one image to /v2/media and return its attachment { id } for referencing on a status. Fits the picked
+// bytes to the instance's limits first (imageTransform is a pass-through when they already fit). A 202 means the
+// server is still processing (the media has no `url` yet) — poll until it's ready; images usually return 200
+// immediately, so this rarely runs (there's no timer to space polls, so they're network-paced and capped).
+//
+// A STANDALONE helper on purpose: `send` calls it now (the app hands us the bytes at submit — usesUploadAttachment
+// is false), and a future `uploadAttachment` verb will call the exact same helper when the app pre-uploads instead.
+async function uploadMedia(file) {
+	const limits = (await getInstance())?.configuration?.media_attachments;
+	const fitted = await imageTransform(file, ["jpeg", "png"], {
+		maxBytes: limits?.image_size_limit ?? 16777216,   // 16 MiB — the modern Mastodon default
+		maxPixels: 4096
+	});
+	let media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
+	for (let i = 0; media.url == null && i < 30; i++) {
+		media = await fetch(`${site}/api/v1/media/${media.id}`).json();
+	}
+	return { id: media.id };
+}
+
 async function performAction(actionId, target, actionValue) {
 	// 2.0 stores the status id on the item's metadata; older items stored it as the
 	// action's value. Fall back for those. Removable a few months after 2.0
@@ -640,12 +670,23 @@ async function performAction(actionId, target, actionValue) {
 		const contentWarning = draft.contentWarning;   // a first-class content field, not an attribute
 		const hasContentWarning = contentWarning != null && contentWarning.length > 0;
 		const visibility = attributes.visibility;
+
+		// Upload each attached image first (the app carried the bytes to submit — usesUploadAttachment is false),
+		// then reference the resulting ids on the status. A failed upload throws, failing the whole post.
+		const mediaAttachments = (draft.attachments ?? []).filter(a => a.kind == "media");
+		const mediaIds = [];
+		for (const attachment of mediaAttachments) {
+			const uploaded = await uploadMedia(attachment.file);
+			mediaIds.push(uploaded.id);
+		}
+
 		const body = {
 			status: draft.body,
 			in_reply_to_id: draft.metadata?.replyTo,
 			quoted_status_id: draft.metadata?.quotedId,
 			visibility: visibility,
 			language: attributes.language,
+			media_ids: mediaIds.length > 0 ? mediaIds : undefined,
 			spoiler_text: hasContentWarning ? contentWarning : undefined,
 			sensitive: hasContentWarning ? true : undefined,
 			// The server ignores the quote policy for followers-only/direct posts, so only send it when it applies.
