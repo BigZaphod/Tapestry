@@ -8,7 +8,7 @@
   "site_prompt": "Instance",
   "site_placeholder": "https://mastodon.social",
   "site_default": "https://mastodon.social",
-  "site_help": "Enter the the URL for the Mastodon instance where your account is located.",
+  "site_help": "Enter the URL for the Mastodon instance where your account is located.",
   "register": "/api/v1/apps",
   "oauth_authorize": "/oauth/authorize",
   "oauth_token": "/oauth/token",

@@ -394,7 +394,7 @@ async function composeDraft(actionId, target, id) {
 				: { media: [{ allow: ["image"], max: 4 }] },
 			combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
 		},
-		media: { usesUploadAttachment: false }
+		media: { usesUploadAttachment: false, supportsAltText: ["image"], supportsFocusPoint: ["image"] }
 	};
 
 	if (actionId == "reply") {
@@ -570,13 +570,16 @@ function historyHashtags(query) {
 	}
 }
 
-// Upload one image to /v2/media and return its attachment { id } for referencing on a status. Fits the picked
-// bytes to the instance's limits first (imageTransform is a pass-through when they already fit). A 202 means the
-// server is still processing (the media has no `url` yet) — poll until it's ready; images usually return 200
-// immediately, so this rarely runs (there's no timer to space polls, so they're network-paced and capped).
+// Upload one image's BYTES to /v2/media and return its attachment { id }. Bytes-only on purpose — NOT alt text or
+// focus: those are user-editable up until the moment of posting, so applying them here would capture stale values
+// once the app pre-uploads early (the uploadAttachment path). They're set at SUBMIT instead, from the final draft
+// values, via `updateMediaMetadata` (PUT /v1/media/:id) — see `send`. Fits the picked bytes to the instance's
+// limits first (imageTransform is a pass-through when they already fit). A 202 means the server is still processing
+// (the media has no `url` yet) — poll until it's ready; images usually return 200 immediately, so this rarely runs
+// (there's no timer to space polls, so they're network-paced and capped).
 //
-// A STANDALONE helper on purpose: `send` calls it now (the app hands us the bytes at submit — usesUploadAttachment
-// is false), and a future `uploadAttachment` verb will call the exact same helper when the app pre-uploads instead.
+// A STANDALONE, bytes-only helper on purpose: `send` calls it now (the app hands us the bytes at submit —
+// usesUploadAttachment is false), and a future `uploadAttachment` verb calls the exact same helper to pre-upload.
 async function uploadMedia(file) {
 	const limits = (await getInstance())?.configuration?.media_attachments;
 	const fitted = await imageTransform(file, ["jpeg", "png"], {
@@ -588,6 +591,14 @@ async function uploadMedia(file) {
 		media = await fetch(`${site}/api/v1/media/${media.id}`).json();
 	}
 	return { id: media.id };
+}
+
+// Apply an attachment's alt text + focal point to an already-uploaded (but not-yet-attached) media, at SUBMIT.
+// Separate from the upload so it always reads the FINAL edited values — race-free whether the bytes were uploaded
+// just now (usesUploadAttachment false) or pre-uploaded while the user kept editing (the uploadAttachment path).
+// Mastodon has no media_attributes on status CREATE (that's edit-only), so this is PUT /v1/media/:id.
+async function updateMediaMetadata(id, description, focus) {
+	await fetch(`${site}/api/v1/media/${id}`, { method: "PUT", json: { description: description, focus: focus } });
 }
 
 async function performAction(actionId, target, actionValue) {
@@ -676,8 +687,12 @@ async function performAction(actionId, target, actionValue) {
 		const mediaAttachments = (draft.attachments ?? []).filter(a => a.kind == "media");
 		const mediaIds = [];
 		for (const attachment of mediaAttachments) {
-			const uploaded = await uploadMedia(attachment.file);
-			mediaIds.push(uploaded.id);
+			const { id } = await uploadMedia(attachment.file);
+			// Apply the FINAL alt text / focal point now, at submit (see updateMediaMetadata).
+			const point = attachment.focalPoint;
+			const focus = point ? `${point.x},${point.y}` : undefined;
+			if (attachment.altText || focus) { await updateMediaMetadata(id, attachment.altText, focus); }
+			mediaIds.push(id);
 		}
 
 		const body = {
