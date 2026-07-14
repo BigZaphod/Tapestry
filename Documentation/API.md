@@ -709,13 +709,15 @@ end-to-end link-card flow.
 draft.rules.media = {
   usesUploadAttachment: true,      // default true — pre-upload each media via uploadAttachment()
   supportsAltText:    ["image"],   // media kinds that can carry a description
-  supportsFocusPoint: ["image"]    // media kinds that get a focus-point editor
+  supportsFocusPoint: ["image"],   // media kinds that get a focus-point editor
+  requiresAltText:    []           // media kinds that MUST carry a description before posting
 };
 ```
 
   * **usesUploadAttachment** — how media bytes reach the service. `true` (the default) means the app **pre-uploads** each attachment as the user picks it by calling your [`uploadAttachment`](#uploadattachment) verb, so the upload runs during composing (with progress) and submit is fast. `false` means there is no separate step — the media's **bytes ride the submit request**, which you upload inside your submit verb. Set `false` only for a service with no separate media endpoint (or where the media *is* the post). Either way, a submit verb reads the media off `draft.attachments` — see [Composing → Media](#media).
   * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
   * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
+  * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
 
 ##### rules — emoji shortcodes
 
