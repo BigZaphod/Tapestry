@@ -364,7 +364,9 @@ An object with `width` and `height` properties. The values are used to optimize 
 
 #### focalPoint: Object
 
-An object with `x` and `x` properties. The values are used to center media in the timeline. If no values are specified, the center at (0, 0) is assumed.
+An object with `x` and `y` properties marking the point to keep in view when the media is cropped to fit (a timeline grid cell, a preview, etc.). Both values range **−1 to +1**: `x` runs −1 (left) to +1 (right), and `y` runs −1 (bottom) to **+1 (top)**. The default, `{x: 0, y: 0}`, is the center.
+
+This is Tapestry's standard focus-point convention — it matches Mastodon's. A service that uses a different range or orientation (e.g. `0…1`, or a top-down `y`) should have its connector rescale to and from this convention when it reads and writes the value.
 
 ---
 ### LinkAttachment
