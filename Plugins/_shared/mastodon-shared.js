@@ -394,7 +394,7 @@ async function composeDraft(actionId, target, id) {
 				: { media: [{ allow: ["image"], max: 4 }] },
 			combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
 		},
-		media: { usesUploadAttachment: false, supportsAltText: ["image"], supportsFocusPoint: ["image"] }
+		media: { usesUploadAttachment: true, supportsAltText: ["image"], supportsFocusPoint: ["image"] }
 	};
 
 	if (actionId == "reply") {
@@ -590,7 +590,15 @@ async function uploadMedia(file) {
 	for (let i = 0; media.url == null && i < 30; i++) {
 		media = await fetch(`${site}/api/v1/media/${media.id}`).json();
 	}
-	return { id: media.id };
+	return { id: media.id, file: fitted };
+}
+
+// The uploadAttachment verb: pre-upload one attachment's bytes during compose (the app pre-uploads when
+// usesUploadAttachment is true, for progress + a fast submit) and hand back a DraftAsset carrying the server ref.
+// Same helper `send` uses in the carried-at-submit mode — the only difference is WHEN the app calls it.
+async function uploadAttachment(file) {
+	const uploaded = await uploadMedia(file);
+	return DraftAsset.create(uploaded.file, { id: uploaded.id });
 }
 
 // Apply an attachment's alt text + focal point to an already-uploaded (but not-yet-attached) media, at SUBMIT.
@@ -687,7 +695,10 @@ async function performAction(actionId, target, actionValue) {
 		const mediaAttachments = (draft.attachments ?? []).filter(a => a.kind == "media");
 		const mediaIds = [];
 		for (const attachment of mediaAttachments) {
-			const { id } = await uploadMedia(attachment.file);
+			// Mode-agnostic: a pre-uploaded attachment already carries its ref (`metadata.id`); one carried to
+			// submit still has its bytes (`file`) and is uploaded here. So `send` works whether the app pre-uploads
+			// (usesUploadAttachment true) or not — the same media flows through either way.
+			const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file)).id;
 			// Apply the FINAL alt text / focal point now, at submit (see updateMediaMetadata).
 			const point = attachment.focalPoint;
 			const focus = point ? `${point.x},${point.y}` : undefined;
