@@ -647,6 +647,43 @@ async function buildExternalEmbed(link) {
 	return { "$type": "app.bsky.embed.external", external: external };
 }
 
+// Upload one image's bytes to a blob and return the ref plus its DISPLAY dimensions — Bluesky positions each
+// embedded image by `aspectRatio`, so the connector reads the fitted image's size with `imageInfo`. The bytes are
+// fitted under Bluesky's per-image blob limit (1 MB) first. `uploadBlob` is synchronous — the blob ref comes back
+// immediately, with none of Mastodon's `/v2/media` async-processing poll. A STANDALONE, bytes-only helper: `send`
+// calls it for media carried to submit, and `uploadAttachment` calls the same one to pre-upload during compose.
+async function uploadImage(file) {
+	const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 1000000, maxPixels: 2000 });
+	const info = await imageInfo(fitted);
+	const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json();
+	return { blob: uploaded.blob, width: info.width, height: info.height, file: fitted };
+}
+
+// The uploadAttachment verb: pre-upload one image during compose (usesUploadAttachment is true, for progress + a
+// fast submit) and hand back a DraftAsset carrying the blob ref + dimensions. A blob ref is a structured object and
+// our draft metadata is string-valued, so it rides as JSON; `send` parses it back. Same `uploadImage` helper `send`
+// uses in the carried-to-submit mode — only WHEN the app calls it differs.
+async function uploadAttachment(file) {
+	const uploaded = await uploadImage(file);
+	return DraftAsset.create(uploaded.file, { blob: JSON.stringify(uploaded.blob), width: `${uploaded.width}`, height: `${uploaded.height}` });
+}
+
+// Build an `app.bsky.embed.images` from the draft's image attachments. Mode-agnostic like Mastodon's send: an
+// attachment pre-uploaded during compose already carries its blob ref + dimensions (`metadata`, JSON); one carried
+// to submit still has its bytes (`file`) and is uploaded here. Alt text is read from the FINAL draft and written on
+// this record — never uploaded early, so editing it during an eager upload can't race. Bluesky has no focal point.
+async function buildImagesEmbed(attachments) {
+	const images = [];
+	for (const attachment of attachments) {
+		const meta = attachment.metadata;
+		const { blob, width, height } = meta != null
+			? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
+			: await uploadImage(attachment.file);
+		images.push({ image: blob, alt: attachment.altText ?? "", aspectRatio: { width: width, height: height } });
+	}
+	return { "$type": "app.bsky.embed.images", images: images };
+}
+
 // Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
 // no mention prefill — a Bluesky reply notifies the parent via the ref (matching the official client), and any
 // @-mention the user types becomes a facet at send. `newPost` starts blank. Both carry a client-chosen `rkey` for
@@ -670,14 +707,18 @@ function composeDraft(actionId, target, metadata) {
 		suggestions: ["@"],
 		// A post carries ONE embed — a link card, an image set, or a video, mutually exclusive — and may ALSO quote
 		// another post (recordWithMedia combines a quote with any one of those). So `media` and `quote` are separate
-		// slots that can coexist. Only `link` and `quote` are wired up so far; image/video join the media slot later.
+		// slots that can coexist; WITHIN the media slot, a link and an image set are alternative options (exactly one
+		// active), which is what makes them mutually exclusive. Video joins the media slot later.
 		attachments: {
 			slots: {
-				media: [ { allow: ["link"] } ],
+				media: [ { allow: ["link"] }, { allow: ["image"], max: 4 } ],
 				quote: [ { allow: ["item"] } ]
 			},
 			combinations: [ ["media", "quote"] ]
-		}
+		},
+		// Bluesky has no focal point (it positions with aspectRatio alone); alt text is per-image and lives on the
+		// post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is race-free.
+		media: { usesUploadAttachment: true, supportsAltText: ["image"], supportsFocusPoint: [] }
 	};
 
 	if (actionId == "reply") {
@@ -978,17 +1019,24 @@ async function performAction(actionId, target, actionValue) {
 				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
 			};
 		}
-		// Attachments: a manually-added link becomes an `external` card; a quote is a `record` embed. When both are
-		// present they combine via `recordWithMedia` (the quote is the record, the card is the media).
+		// Attachments: the post's ONE media embed is either an image set or a link card (the composer's rules make
+		// them mutually exclusive); a quote is a `record` embed. Media + quote combine via `recordWithMedia` (the
+		// quote is the record, the media is the media); either can also stand alone.
+		const imageAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
 		const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
-		const externalEmbed = linkAttachment != null ? await buildExternalEmbed(linkAttachment) : null;
+		let mediaEmbed = null;
+		if (imageAttachments.length > 0) {
+			mediaEmbed = await buildImagesEmbed(imageAttachments);
+		} else if (linkAttachment != null) {
+			mediaEmbed = await buildExternalEmbed(linkAttachment);
+		}
 		if (draft.metadata.quoteUri != null) {
 			const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
-			record.embed = externalEmbed != null
-				? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: externalEmbed }
+			record.embed = mediaEmbed != null
+				? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: mediaEmbed }
 				: quoteEmbed;
-		} else if (externalEmbed != null) {
-			record.embed = externalEmbed;
+		} else if (mediaEmbed != null) {
+			record.embed = mediaEmbed;
 		}
 		const facets = await buildFacets(draft.body);
 		if (facets.length > 0) { record.facets = facets; }
