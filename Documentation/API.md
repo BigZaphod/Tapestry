@@ -43,7 +43,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
   * connector-declared **emoji shortcodes** — a set of custom emoji powering the composer's built-in `:`-autocomplete — via [`draft.rules.shortcodes`](#rules--emoji-shortcodes).
   * connector-declared **autocomplete markers** (`@`, `#`) that drive live mention/hashtag suggestions through the new [`suggest()`](#suggest) verb — via [`draft.rules.suggestions`](#rules--suggestion-markers).
-  * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item) (the same shape as a read-side quote attachment).
+  * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item-and-media) (the same shape as a read-side quote attachment).
   * [`extractLinks()`](#extractlinks) — find the web links (bare domains included) in a string, the *same* detection the composer uses to attach link cards, so a post's in-text link facets recognize exactly the URLs the card does.
 
 **Networking is unified under [`fetch()`](#fetch).** One function covers everything `sendRequest()` and `sendConditionalRequest()` did — plus JSON/form/query serialization, binary uploads, downloads kept as [`FileAsset`](#fileasset) handles, and typed errors:
@@ -53,7 +53,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
   * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
 
-**Media processing.** [`imageTransform()`](#imagetransform) fits an image [`FileAsset`](#fileasset) to a set of formats and size limits — useful today for re-fitting *remote* media (such as building a link-card thumbnail from a fetched image); attaching *local* media to a post is still forthcoming.
+**Media attachments.** A post can carry the images the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, plus which kinds support alt text / a focus point) and — in the default pre-upload mode — implements the [`uploadAttachment()`](#uploadattachment) verb, returning a [`DraftAsset`](#uploadattachment); the submit verb then reads the media off [`draft.attachments`](#media). [`imageTransform()`](#imagetransform) fits an image [`FileAsset`](#fileasset) to a service's formats and size limits — used both here and for re-fitting *remote* media (such as a link-card thumbnail from a fetched image).
 
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
@@ -493,13 +493,13 @@ A heading shown at the top of the composer, such as "Reply to @alice". This is c
 
 Posts to display above the composer for context — for a reply, the post being replied to. This is display only; a connector carries the actual reply references in `metadata`.
 
-#### attachments: Array of Item
+#### attachments: Array of Item and Media
 
-Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). This is how you **quote** a post: put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
+Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). Two kinds ride here: an [`Item`](#item) is a **quote**, and a `kind: "media"` object is a user-picked **media** attachment (see [Composing → Media](#media)). To quote, put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
 
 `attachments` is for **display** — the composer renders the embedded `Item` as a quote preview. To *build* the quote at submit, don't dig the reference back out of the attachment: when you build the draft (you already have the item in hand), stash the identifiers you need in the draft's own [`metadata`](#metadata-dictionary-1) — exactly as you carry a reply's references there. Same split as `context` vs. the reply refs: the post to *show* rides `attachments`, the reference you *post with* rides `metadata`.
 
-The property is an array so the shape can grow, but a quote is a single embedded post. (Media and poll attachments on a draft are a later addition; today only an embedded `Item` quote is supported.)
+Beyond a quote (a single embedded post), the array holds any **media** attachments the user picked — each a `kind: "media"` object, read at submit ([Composing → Media](#media)). It can carry several as the connector's [attachment rules](#rules--attachments) allow (multiple media, or media alongside a quote); a poll attachment is a later addition.
 
 #### metadata: Dictionary
 
@@ -646,12 +646,11 @@ The attachment types (referenced by these flat string names):
 | `"audio"` | an audio clip |
 | `"link"` | a link / website card |
 | `"poll"` | a poll |
-| `"item"` | a quoted / embedded post (put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item)) |
+| `"item"` | a quoted / embedded post (put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item-and-media)) |
 
 The media names (`image` / `animation` / `video` / `audio`) are a **behavior taxonomy, deliberately
 format-agnostic** — `image` spans JPEG/HEIC/PNG, `animation` spans GIF/APNG/muted-MP4. The *container format* is
-the transform's concern, not a type. (See [`imageTransform`](#imagetransform); the `animation`/`video`/`audio`
-transforms are forthcoming.)
+the transform's concern, not a type (see [`imageTransform`](#imagetransform)).
 
 **The shape.** Three nested levels:
 
@@ -697,11 +696,26 @@ pastes a URL, the app detects it (bare domains included) and attaches a card, us
 [`extractLinks`](#extractlinks) so the card and the post's link facets agree. See the connector guide for the
 end-to-end link-card flow.
 
-> **Compatibility:** Requires `minimum_app_version` >= 2.0. These rules parse and round-trip for every type today,
-> but the composer's end-to-end support currently covers `link` and `item` (quote); the media pickers
-> (`image` / `animation` / `video` / `audio`) and `poll` editor arrive in a later version — declaring them now is
-> forward-compatible but not yet pickable. Per-type policy rules (alt-text requirements, poll shape) are likewise
-> forthcoming.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0. These rules parse and round-trip for every type. The
+> composer offers a picker for `link`, `item` (quote), and `image` media (with alt text and focus point via
+> [`rules.media`](#rules--media)). Declaring `animation`, `video`, `audio`, or `poll` parses without error, but the
+> composer does not present a picker for those types.
+
+##### rules — media
+
+`rules.media` declares media-specific policy the [attachment rules](#rules--attachments) can't express — how media is uploaded, and which media kinds carry alt text and a focus point. Every key is optional.
+
+```js
+draft.rules.media = {
+  usesUploadAttachment: true,      // default true — pre-upload each media via uploadAttachment()
+  supportsAltText:    ["image"],   // media kinds that can carry a description
+  supportsFocusPoint: ["image"]    // media kinds that get a focus-point editor
+};
+```
+
+  * **usesUploadAttachment** — how media bytes reach the service. `true` (the default) means the app **pre-uploads** each attachment as the user picks it by calling your [`uploadAttachment`](#uploadattachment) verb, so the upload runs during composing (with progress) and submit is fast. `false` means there is no separate step — the media's **bytes ride the submit request**, which you upload inside your submit verb. Set `false` only for a service with no separate media endpoint (or where the media *is* the post). Either way, a submit verb reads the media off `draft.attachments` — see [Composing → Media](#media).
+  * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
+  * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
 
 ##### rules — emoji shortcodes
 
@@ -722,7 +736,7 @@ draft.rules.shortcodes = [
 
   * **shortcode** — the name between the colons (`blobcat` for `:blobcat:`). Required.
   * **url** — the emoji image, shown in the autocomplete menu (and matching what the service renders `:shortcode:` to). Required; an entry with no valid URL is dropped.
-  * **category** — an optional grouping label, reserved for a future emoji picker; the autocomplete ignores it.
+  * **category** — an optional grouping label.
 
 Omitting `shortcodes` (or leaving it empty) leaves the `:` trigger **inactive** — appropriate for a service that has
 no custom emoji (e.g. one using plain Unicode emoji only). This is the compose-side counterpart to an item's
@@ -862,6 +876,41 @@ async function performAction(actionId, target, actionValue) {
 
 See the section on `actions.json` for more information on how to define and perform actions.
 
+##### Media
+
+A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a `kind: "media"` object per attachment (images today; video/audio in time). Your submit verb turns each into the service's wire format. What an attachment carries depends on the upload mode you set in [`rules.media.usesUploadAttachment`](#rules--media):
+
+  * **Pre-upload** (`usesUploadAttachment: true`, the default) — the app already uploaded it during composing via your [`uploadAttachment`](#uploadattachment) verb, so the attachment carries the **`metadata`** you returned (your service ref). Reference it.
+  * **Carry-at-submit** (`false`) — the app didn't pre-upload; the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)) instead. Upload it here.
+
+One submit verb handles both by preferring the ref and falling back to the bytes:
+
+```javascript
+else if (actionId == "send") {
+    const draft = target;
+    const mediaIds = [];
+    for (const attachment of draft.attachments.filter(a => a.kind === "media")) {
+        // pre-uploaded → your ref; carried → upload the bytes now (fit them first — see below)
+        const id = attachment.metadata?.id ?? await uploadMedia(attachment.file);
+        // Apply the user's alt text / focus point HERE, at submit — NOT at upload: they stay editable after a
+        // pre-upload, so applying them earlier would capture stale values. (Mastodon: PUT /api/v1/media/:id.)
+        if (attachment.altText != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
+        mediaIds.push(id);
+    }
+    const post = await fetch.post(`${site}/api/v1/statuses`, { json: { status: draft.body, media_ids: mediaIds }, headers: { … } }).json();
+    return [ /* the created Item */ ];
+}
+```
+
+Each media attachment carries:
+
+  * **altText** — the user's description (`String`), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
+  * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object) (same −1…+1 convention as read-side media), when supported and set.
+  * **metadata** — your service ref (whatever object you returned from `uploadAttachment`); present only in pre-upload mode.
+  * **file** — the [`FileAsset`](#fileasset) bytes; present only in carry-at-submit mode.
+
+Before uploading raw bytes, fit them to the service's limits with [`imageTransform`](#imagetransform) (a pass-through when they already fit), and upload with a multipart `fetch` body (see [`fetch` Options](#options)). In pre-upload mode the fitting happens inside `uploadAttachment`, so a carry-at-submit connector's `uploadMedia` above is just that verb's body run at submit time — the two modes share the same upload code, called at different times.
+
 ---
 ### suggest
 
@@ -899,6 +948,31 @@ async function suggest(match) {
   * **id** — an optional stable identifier for the pick (an account id), carried for later use.
 
 `suggest()` is **best-effort** and fired on every keystroke, so it should return quickly. It does **not** need to guard its own errors: a thrown failure is logged by the host and simply shows no rows — it never interrupts composing. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### uploadAttachment
+
+`uploadAttachment(file) → DraftAsset`
+
+Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.usesUploadAttachment: true`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (When `usesUploadAttachment` is `false`, this verb is never called; you upload inside your submit verb instead — see [Composing → Media](#media).)
+
+  * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) and to a `fetch` upload body.
+
+Fit the bytes to the service, upload them, and return a **`DraftAsset`** carrying the uploaded bytes plus your service ref. Throw an `Error` to report a failure — the app surfaces it and offers a retry.
+
+Do **not** apply the user's alt text or focus point here: they stay editable after this runs, so capturing them now would use stale values. They ride each attachment and are applied at submit ([Composing → Media](#media)).
+
+```javascript
+async function uploadAttachment(file) {
+    const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 8_000_000, maxPixels: 4096 });
+    const res = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
+    return DraftAsset.create(fitted, { id: res.id });   // bytes + the ref you reference at submit
+}
+```
+
+**`DraftAsset.create(file, metadata)`** builds the return value: `file` is the uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1010,12 +1084,12 @@ However many readers you touch, only ONE request is sent — and the body can be
 
 An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You send one with the `body:`, `multipart:`, or `base64:` options.
 
-Today a `FileAsset` comes from exactly one place: **`fetch(url).file()`** — the response body of a request, kept on disk instead of read into JavaScript. That's enough to *proxy* remote media (download from one URL, upload to another) without the bytes passing through your connector. Creating a `FileAsset` from **local content** (a user's picked photo/video) is part of the forthcoming media-attachment support and is **not available yet** — so composing a post with a locally-attached file isn't something a connector can do today.
+A `FileAsset` reaches a connector two ways: as the response body of a request — **`fetch(url).file()`**, remote content kept on disk instead of read into JavaScript, enough to *proxy* media (download from one URL, upload to another) without the bytes passing through your connector — and as the user's **picked media** while composing, handed to your [`uploadAttachment`](#uploadattachment) verb (or, in carry-at-submit mode, riding a draft's media attachment as its `file`; see [Composing → Media](#media)).
 
-  * mimeType: `String`
+  * mimeType: `String` — the container format (`"image/jpeg"`, `"video/mp4"`, …).
   * byteSize: `Number`
   * filename: `String` or `null`
-  * isImage / isVideo / isAudio: `Boolean`
+  * assetType: `String` or `null` — the media category, using the same [kind names](#rules--attachments) as attachments (`"image"`, `"animation"`, `"video"`, `"audio"`), or `null` when the bytes aren't a recognized media type. Branch on it to pick an endpoint or transform per kind (`if (file.assetType === "image") …`).
 
 A FileAsset stays valid as long as you keep a reference to it (holding one across actions is fine). In rare cases the operating system can reclaim the underlying temporary storage while the app is suspended — using the asset then throws an error with `name` `"FileUnavailableError"`, and the remedy is to fetch it again.
 
@@ -1099,7 +1173,7 @@ For feed-like data sources (such as RSS), this often results in a very significa
 
 Fits an image [`FileAsset`](#fileasset) to a set of acceptable formats and size limits, resolving to a **new** `FileAsset` (or the same one, unchanged, if it already qualifies). The work runs off the main thread, so `await` it.
 
-Because the only `FileAsset`s available today come from [`fetch(url).file()`](#reading-the-response) — remote content; creating one from local picked media is still forthcoming — this is mainly useful for **re-fitting remote media**: download an image, fit it, and upload it. For example, building a link-card thumbnail that a server wants within certain dimensions or a byte limit.
+Use it to fit an image to a service's requirements before uploading — both **local** picked media (inside [`uploadAttachment`](#uploadattachment), or at submit in carry-at-submit mode) and **remote** media you're re-hosting (download an image, fit it, upload it — for example a link-card thumbnail a server wants within certain dimensions or a byte limit).
 
   * asset: a [`FileAsset`](#fileasset) holding an image.
   * formats: `Array` of format-name `String`s in preference order — `"jpeg"`, `"heic"`, `"png"`, `"gif"`. If the input is already one of them it's kept; otherwise it's converted to the **first**. (Names Tapestry doesn't recognize are ignored; an empty set throws.)
@@ -1117,6 +1191,31 @@ It **throws** if the input isn't a decodable image, if no acceptable format is g
 const original = await fetch(imageUrl).file();
 const fitted = await imageTransform(original, ["jpeg", "png"], { maxBytes: 1000000, maxPixels: 1024 });
 await fetch.post(uploadUrl, { body: fitted });
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### imageInfo
+
+`imageInfo(asset) → Promise`
+
+Reads an image [`FileAsset`](#fileasset)'s display dimensions. It reads image properties only (no pixel decode), but is asynchronous — `await` it. Use it to send an aspect ratio alongside an upload (for example Bluesky's `aspectRatio` on an embedded image).
+
+  * asset: a [`FileAsset`](#fileasset) holding an image — typically the one you're about to upload (call it on the [`imageTransform`](#imagetransform) output so the dimensions match the bytes you send).
+
+Resolves to an object:
+
+  * width: `Number` — the displayed width in pixels.
+  * height: `Number` — the displayed height in pixels.
+
+EXIF orientation is applied, so a photo stored sideways reports its upright width and height. It **throws** if the asset isn't a readable image.
+
+```javascript
+const fitted = await imageTransform(picked, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
+const { width, height } = await imageInfo(fitted);
+const blob = (await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json()).blob;
+images.push({ image: blob, alt: attachment.altText ?? "", aspectRatio: { width, height } });
 ```
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
