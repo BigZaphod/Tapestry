@@ -42,7 +42,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
   * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
   * connector-declared **emoji shortcodes** — a set of custom emoji powering the composer's built-in `:`-autocomplete — via [`draft.rules.shortcodes`](#rules--emoji-shortcodes).
-  * connector-declared **autocomplete markers** (`@`, `#`) that drive live mention/hashtag suggestions through the new [`suggest()`](#suggest) verb — via [`draft.rules.suggestions`](#rules--suggestion-markers).
+  * connector-declared **autocomplete markers** (`@`, `#`) that drive live mention/hashtag suggestions through the new [`suggest()`](#suggest) function — via [`draft.rules.suggestions`](#rules--suggestion-markers).
   * quote posts — put the quoted [`Item`](#item) in [`draft.attachments`](#attachments-array-of-item-and-media) (the same shape as a read-side quote attachment).
   * [`extractLinks()`](#extractlinks) — find the web links (bare domains included) in a string, the *same* detection the composer uses to attach link cards, so a post's in-text link facets recognize exactly the URLs the card does.
 
@@ -53,7 +53,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
   * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
 
-**Media attachments.** A post can carry the images the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, plus which kinds support alt text / a focus point) and — in the default pre-upload mode — implements the [`uploadAttachment()`](#uploadattachment) verb, returning a [`DraftAsset`](#uploadattachment); the submit verb then reads the media off [`draft.attachments`](#media). [`imageTransform()`](#imagetransform) fits an image [`FileAsset`](#fileasset) to a service's formats and size limits — used both here and for re-fitting *remote* media (such as a link-card thumbnail from a fetched image).
+**Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `maxDuration`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`DraftAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
 
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
 
@@ -521,7 +521,7 @@ A `[String: String]` map holding the user's current choice for each *setting att
 
 Connector-declared rules that tell the composer how to behave for this draft: which content fields it offers and how they're counted, and the *setting attributes* it presents (visibility, language, per-post permissions, …). Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
 
-**These rules describe what the composer offers the *user*, not a schema the draft must satisfy.** A build verb hands back a draft in whatever shape it likes — body, attributes, and even attachments already in place — and the rules then govern only what the user may *add*, change, and combine, and when Post enables. Omitting a rule removes that *editing* affordance without removing anything the connector pre-placed: attach a quote or an image and declare no matching attachment slot, and the content still rides along and posts — the user just can't add more of that kind. (So the same `rules` both drive the editor and, by omission, let a connector deliver ready-made content the user can't touch.)
+**These rules describe what the composer offers the *user*, not a schema the draft must satisfy.** Your connector hands back a draft in whatever shape it likes — body, attributes, and even attachments already in place — and the rules then govern only what the user may *add*, change, and combine, and when Post enables. Omitting a rule removes that *editing* affordance without removing anything the connector pre-placed: attach a quote or an image and declare no matching attachment slot, and the content still rides along and posts — the user just can't add more of that kind. (So the same `rules` both drive the editor and, by omission, let a connector deliver ready-made content the user can't touch.)
 
 ##### rules — content fields and character counting
 
@@ -633,8 +633,8 @@ transform functions.
 
 The **offered set is implicit** — an attachment type is offerable if and only if it appears somewhere in these
 rules. There is no separate "allowed types" list. And since these rules gate only what the *user* can do, omitting
-a type (or omitting `attachments` entirely) is how you *prevent* the user attaching that kind — while your build
-verb stays free to pre-attach it in the draft it hands back (see the editor-vs-draft note under [rules](#rules-object)).
+a type (or omitting `attachments` entirely) is how you *prevent* the user attaching that kind — while your connector
+stays free to pre-attach it in the draft it hands back (see the editor-vs-draft note under [rules](#rules-object)).
 
 The attachment types (referenced by these flat string names):
 
@@ -707,25 +707,27 @@ end-to-end link-card flow.
 
 ```js
 draft.rules.media = {
-  usesUploadAttachment: true,      // default true — pre-upload each media via uploadAttachment()
+  upload: "eager",                 // default — pre-upload each media via uploadAttachment()
   supportsAltText:    ["image"],   // media kinds that can carry a description
   supportsFocusPoint: ["image"],   // media kinds that get a focus-point editor
-  requiresAltText:    []           // media kinds that MUST carry a description before posting
+  requiresAltText:    [],          // media kinds that MUST carry a description before posting
+  maxDuration: { video: 300 }      // hard per-kind length limit, in seconds
 };
 ```
 
-  * **usesUploadAttachment** — how media bytes reach the service. `true` (the default) means the app **pre-uploads** each attachment as the user picks it by calling your [`uploadAttachment`](#uploadattachment) verb, so the upload runs during composing (with progress) and submit is fast. `false` means there is no separate step — the media's **bytes ride the submit request**, which you upload inside your submit verb. Set `false` only for a service with no separate media endpoint (or where the media *is* the post). Either way, a submit verb reads the media off `draft.attachments` — see [Composing → Media](#media).
+  * **upload** — how media bytes reach the service, one of two modes. `"eager"` (the default) means the app **pre-uploads** each attachment as the user picks it by calling your [`uploadAttachment`](#uploadattachment) function, so the upload runs during composing (with progress) and submit is fast. `"deferred"` means there is no separate step — the media's **bytes ride the submit request**, which you upload inside your submit function. Use `"deferred"` only for a service with no separate media endpoint (or where the media *is* the post). Either way, a submit function reads the media off `draft.attachments` — see [Composing → Media](#media).
   * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
   * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
   * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
+  * **maxDuration** — a hard limit, in **seconds**, on how long a time-based attachment may be, keyed by media kind (`video`, `animation`, `audio`). When the user picks a file of that kind longer than the limit, the composer **declines it and tells the user** — it is never silently trimmed — so a too-long file never reaches your upload function. Supply it only for a kind the service caps; omit a kind to leave it unlimited.
 
 ##### rules — emoji shortcodes
 
 `rules.shortcodes` offers a set of **custom emoji** to the composer's built-in `:`-autocomplete. As the user types a
 `:name` token the app matches it against this list *locally* and shows a scrollable menu of matches with their images;
 picking one inserts the plain `:shortcode:` text, which the service renders to the emoji on display. It is a **bounded
-local set** — the connector hands over the whole list up front, so there is no per-keystroke lookup and no verb
-involved. (Declare it in the same build verb that sets the rest of `rules`; for a Mastodon-style service, source it
+local set** — the connector hands over the whole list up front, so there is no per-keystroke lookup and nothing to
+call. (Declare it wherever you build the rest of `rules`; for a Mastodon-style service, source it
 from the instance's custom-emoji list.)
 
 ```javascript
@@ -750,7 +752,7 @@ the same source.
 ##### rules — suggestion markers
 
 `rules.suggestions` lists the **marker characters** (such as `@` and `#`) that trigger connector-driven autocomplete
-through the [`suggest()`](#suggest) verb. As the user types a word beginning with a declared marker at a word boundary,
+through the [`suggest()`](#suggest) function. As the user types a word beginning with a declared marker at a word boundary,
 the app calls `suggest()` with that token and shows the returned rows; picking one replaces the token. Unlike
 [`shortcodes`](#rules--emoji-shortcodes) — a bounded local set the app filters itself — these results come live from
 the connector as the user types.
@@ -880,20 +882,19 @@ See the section on `actions.json` for more information on how to define and perf
 
 ##### Media
 
-A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a `kind: "media"` object per attachment (images today; video/audio in time). Your submit verb turns each into the service's wire format. What an attachment carries depends on the upload mode you set in [`rules.media.usesUploadAttachment`](#rules--media):
+A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a `kind: "media"` object per attachment, of whichever kinds (`image`, `video`, `animation`, `audio`) your [attachment rules](#rules--attachments) allow. Your submit function turns each into the service's wire format. What an attachment carries — and how your submit function reads it — depends on the [`rules.media.upload`](#rules--media) mode you declared. A connector implements **one** mode, not both:
 
-  * **Pre-upload** (`usesUploadAttachment: true`, the default) — the app already uploaded it during composing via your [`uploadAttachment`](#uploadattachment) verb, so the attachment carries the **`metadata`** you returned (your service ref). Reference it.
-  * **Carry-at-submit** (`false`) — the app didn't pre-upload; the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)) instead. Upload it here.
+  * **`"eager"`** (the default) — the app pre-uploaded each attachment during composing via your [`uploadAttachment`](#uploadattachment) function, so the attachment carries the **`metadata`** you returned (your service ref), and your submit function just references it.
+  * **`"deferred"`** — the app did not pre-upload; the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)), and your submit function uploads them itself.
 
-One submit verb handles both by preferring the ref and falling back to the bytes:
+A submit function for the default eager mode reads the refs:
 
 ```javascript
 else if (actionId == "send") {
     const draft = target;
     const mediaIds = [];
     for (const attachment of draft.attachments.filter(a => a.kind === "media")) {
-        // pre-uploaded → your ref; carried → upload the bytes now (fit them first — see below)
-        const id = attachment.metadata?.id ?? await uploadMedia(attachment.file);
+        const id = attachment.metadata.id;   // the ref your uploadAttachment returned
         // Apply the user's alt text / focus point HERE, at submit — NOT at upload: they stay editable after a
         // pre-upload, so applying them earlier would capture stale values. (Mastodon: PUT /api/v1/media/:id.)
         if (attachment.altText != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
@@ -904,14 +905,16 @@ else if (actionId == "send") {
 }
 ```
 
+A `"deferred"` connector's submit function is the same shape, except each `id` comes from uploading the bytes right there — `const id = await uploadMedia(attachment.file)` — the very code an eager connector runs inside `uploadAttachment`. The alt-text / focus-point step is identical either way.
+
 Each media attachment carries:
 
   * **altText** — the user's description (`String`), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
   * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object) (same −1…+1 convention as read-side media), when supported and set.
-  * **metadata** — your service ref (whatever object you returned from `uploadAttachment`); present only in pre-upload mode.
-  * **file** — the [`FileAsset`](#fileasset) bytes; present only in carry-at-submit mode.
+  * **metadata** — your service ref (whatever object you returned from `uploadAttachment`); present in **eager** mode.
+  * **file** — the [`FileAsset`](#fileasset) bytes; present in **deferred** mode.
 
-Before uploading raw bytes, fit them to the service's limits with [`imageTransform`](#imagetransform) (a pass-through when they already fit), and upload with a multipart `fetch` body (see [`fetch` Options](#options)). In pre-upload mode the fitting happens inside `uploadAttachment`, so a carry-at-submit connector's `uploadMedia` above is just that verb's body run at submit time — the two modes share the same upload code, called at different times.
+Before uploading raw bytes — in a deferred connector, or when re-hosting remote media — fit them to the service's limits with the transform for the attachment's kind — [`imageTransform`](#imagetransform), [`videoTransform`](#videotransform), [`animationTransform`](#animationtransform), or [`audioTransform`](#audiotransform) (each a pass-through when the input already fits) — and upload with a multipart `fetch` body (see [`fetch` Options](#options)). In eager mode that fitting happens inside `uploadAttachment`, so a deferred connector's `uploadMedia` is just that function's body run at submit time — the two modes share the same upload code, called at different times.
 
 ---
 ### suggest
@@ -958,7 +961,7 @@ async function suggest(match) {
 
 `uploadAttachment(file) → DraftAsset`
 
-Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.usesUploadAttachment: true`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (When `usesUploadAttachment` is `false`, this verb is never called; you upload inside your submit verb instead — see [Composing → Media](#media).)
+Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.upload: "eager"`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (In `"deferred"` mode this function is never called; you upload inside your submit function instead — see [Composing → Media](#media).)
 
   * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) and to a `fetch` upload body.
 
@@ -1086,12 +1089,15 @@ However many readers you touch, only ONE request is sent — and the body can be
 
 An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You send one with the `body:`, `multipart:`, or `base64:` options.
 
-A `FileAsset` reaches a connector two ways: as the response body of a request — **`fetch(url).file()`**, remote content kept on disk instead of read into JavaScript, enough to *proxy* media (download from one URL, upload to another) without the bytes passing through your connector — and as the user's **picked media** while composing, handed to your [`uploadAttachment`](#uploadattachment) verb (or, in carry-at-submit mode, riding a draft's media attachment as its `file`; see [Composing → Media](#media)).
+A `FileAsset` reaches a connector two ways: as the response body of a request — **`fetch(url).file()`**, remote content kept on disk instead of read into JavaScript, enough to *proxy* media (download from one URL, upload to another) without the bytes passing through your connector — and as the user's **picked media** while composing, handed to your [`uploadAttachment`](#uploadattachment) function (or, in `"deferred"` upload mode, riding a draft's media attachment as its `file`; see [Composing → Media](#media)).
 
   * mimeType: `String` — the container format (`"image/jpeg"`, `"video/mp4"`, …).
   * byteSize: `Number`
   * filename: `String` or `null`
-  * assetType: `String` or `null` — the media category, using the same [kind names](#rules--attachments) as attachments (`"image"`, `"animation"`, `"video"`, `"audio"`), or `null` when the bytes aren't a recognized media type. Branch on it to pick an endpoint or transform per kind (`if (file.assetType === "image") …`).
+
+To learn a FileAsset's media **category** — `"image"`, `"animation"`, `"video"`, or `"audio"` — call the [`assetType()`](#assettype) function. It's deliberately a function rather than a property: answering it means reading the bytes, so it's asynchronous and never guessed from the file's name.
+
+> **Privacy.** Media the **user picks** is stripped of location and other identifying metadata (losslessly) *before* it is ever handed to your connector — you never receive the user's GPS coordinates. A file you obtain yourself with [`fetch(url).file()`](#reading-the-response) is treated as external content and is **not** stripped; use [`sharable()`](#sharable) if you want to strip such a file before re-hosting it.
 
 A FileAsset stays valid as long as you keep a reference to it (holding one across actions is fine). In rare cases the operating system can reclaim the underlying temporary storage while the app is suspended — using the asset then throws an error with `name` `"FileUnavailableError"`, and the remedy is to fetch it again.
 
@@ -1169,24 +1175,48 @@ For feed-like data sources (such as RSS), this often results in a very significa
 > **Compatibility:** Requires `minimum_app_version` >= 2.0 (available in 2.0 and all later versions). Older connectors use [`sendRequest()`](#sendrequest) and [`sendConditionalRequest()`](#sendconditionalrequest).
 
 ---
+### assetType
+
+`assetType(asset) → Promise`
+
+Classifies a [`FileAsset`](#fileasset) by its actual bytes, resolving to a media-kind `String` — `"image"`, `"animation"`, `"video"`, or `"audio"` — or `null` when the bytes aren't a recognized media type. It reads the file rather than trusting the name or `mimeType`, so a mislabeled file still classifies by what it really is. `await` it.
+
+Use it to branch by kind — to pick an endpoint, or choose which transform to run:
+
+```javascript
+switch (await assetType(file)) {
+    case "image":     /* imageTransform(file, …) */     break;
+    case "animation": /* animationTransform(file, …) */ break;
+    case "video":     /* videoTransform(file, …) */     break;
+    case "audio":     /* audioTransform(file, …) */     break;
+}
+```
+
+The line between `"video"` and `"animation"` is the **audio track**: a movie with sound classifies as `"video"`, a silent one as `"animation"` (the "gifv" case). These are the same [media kind names](#rules--attachments) attachments use.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
 ### imageTransform
 
 `imageTransform(asset, formats, options) → Promise`
 
 Fits an image [`FileAsset`](#fileasset) to a set of acceptable formats and size limits, resolving to a **new** `FileAsset` (or the same one, unchanged, if it already qualifies). The work runs off the main thread, so `await` it.
 
-Use it to fit an image to a service's requirements before uploading — both **local** picked media (inside [`uploadAttachment`](#uploadattachment), or at submit in carry-at-submit mode) and **remote** media you're re-hosting (download an image, fit it, upload it — for example a link-card thumbnail a server wants within certain dimensions or a byte limit).
+Use it to fit an image to a service's requirements before uploading — both **local** picked media (inside [`uploadAttachment`](#uploadattachment), or at submit in `"deferred"` mode) and **remote** media you're re-hosting (download an image, fit it, upload it — for example a link-card thumbnail a server wants within certain dimensions or a byte limit).
 
   * asset: a [`FileAsset`](#fileasset) holding an image.
-  * formats: `Array` of format-name `String`s in preference order — `"jpeg"`, `"heic"`, `"png"`, `"gif"`. If the input is already one of them it's kept; otherwise it's converted to the **first**. (Names Tapestry doesn't recognize are ignored; an empty set throws.)
+  * formats: **required** — an `Array` of format names in preference order: `"jpeg"`, `"heic"`, `"png"`, `"gif"`. If the input is already one of them it's kept; otherwise it's converted to the **first**. Pinning the output is the point of the call, so there's no default — an empty array, or one holding only names Tapestry can't produce, **throws**.
   * options: `Object` (optional):
       * maxBytes: `Number` — the result is kept within this many bytes. Quality is lowered first (for `jpeg`/`heic`), then the image is downscaled, until it fits.
       * maxPixels: `Number` — the longest edge is capped to this many pixels.
       * aspectRatio: `Number` — width ÷ height; the image is center-cropped to fill it (`1.0` = square).
 
+`maxBytes` and `maxPixels` both apply: `maxPixels` caps the dimensions, and `maxBytes` can shrink the image further, so a tight byte budget may bring the result back smaller than `maxPixels`.
+
 An **animated** input is flattened to its first frame — this is an image operation. The returned asset's `mimeType` tells you the format it actually produced (handy for the Content-Type on a subsequent upload).
 
-It **throws** if the input isn't a decodable image, if no acceptable format is given, or if the byte budget can't be met even at the smallest sensible size — so the caller can fall back (for instance, posting a link card without a thumbnail).
+It **throws** if the input isn't a decodable image, if `formats` is empty, or if the byte budget can't be met even at the smallest sensible size — so the caller can fall back (for instance, posting a link card without a thumbnail).
 
 ```javascript
 // Re-fit a remote image for upload: fetch it, fit it under 1 MB at ≤1024px, then send it on.
@@ -1198,27 +1228,76 @@ await fetch.post(uploadUrl, { body: fitted });
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
-### imageInfo
+### videoTransform
 
-`imageInfo(asset) → Promise`
+`videoTransform(asset, formats, options) → Promise`
 
-Reads an image [`FileAsset`](#fileasset)'s display dimensions. It reads image properties only (no pixel decode), but is asynchronous — `await` it. Use it to send an aspect ratio alongside an upload (for example Bluesky's `aspectRatio` on an embedded image).
+Fits a [`FileAsset`](#fileasset) to a **video** slot (motion with sound), resolving to a **new** `FileAsset` — or the same one, unchanged, if it already qualifies. An animated image (GIF/APNG) is transcoded to a video; a movie whose container already matches is repackaged losslessly, otherwise it's re-encoded and downscaled as needed. The work runs off the main thread, so `await` it.
 
-  * asset: a [`FileAsset`](#fileasset) holding an image — typically the one you're about to upload (call it on the [`imageTransform`](#imagetransform) output so the dimensions match the bytes you send).
+  * asset: a [`FileAsset`](#fileasset) holding a movie or an animated image.
+  * formats: **required** — an `Array` of container names in preference order: `"mp4"`, `"mov"`. A movie already in one of them is kept; otherwise it's converted to the **first**. An animated image has no video format of its own, so it's always transcoded to the first. An empty array **throws** — there's no "keep the input" default, since a GIF isn't a video format.
+  * options: `Object` (optional):
+      * maxPixels: `Number` — the longest edge is capped to this many pixels.
+      * maxBytes: `Number` — the result is re-encoded to fit within this many bytes. A budget too small to hit at a watchable bitrate **throws** (so you can fall back) rather than producing a smear.
 
-Resolves to an object:
+`maxPixels` and `maxBytes` both apply. `maxBytes` sets the bitrate for the clip's length, and the resolution is then capped to suit that bitrate — a tight budget lowers *both*, since a sharp smaller video beats a blocky large one — but never above `maxPixels`.
 
-  * width: `Number` — the displayed width in pixels.
-  * height: `Number` — the displayed height in pixels.
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
-EXIF orientation is applied, so a photo stored sideways reports its upright width and height. It **throws** if the asset isn't a readable image.
+---
+### animationTransform
+
+`animationTransform(asset, formats, options) → Promise`
+
+Fits a [`FileAsset`](#fileasset) to an **animation** slot — *silent* motion, the "gifv" — resolving to a **new** `FileAsset`. A movie's audio track is **dropped**; the output is a silent movie or a real animated GIF. Same argument shape as [`videoTransform`](#videotransform).
+
+  * formats: **required** — `"mp4"`, `"mov"`, or `"gif"`: a silent movie for the first two, a genuine animated GIF for `"gif"`. An empty array **throws**.
+  * options: `{ maxPixels, maxBytes }`, exactly as [`videoTransform`](#videotransform).
+
+Because it always strips audio, this is the way to "narrow" a video into a soundless clip that a service accepts as an animation (some, like Bluesky, treat an animation and a video as the same slot but this is useful for Mastodon where the distinction matters).
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### audioTransform
+
+`audioTransform(asset, formats, options) → Promise`
+
+Fits a [`FileAsset`](#fileasset) to an **audio** slot, resolving to a **new** `FileAsset`. A movie's audio track is **extracted**; audio is converted to AAC in an `.m4a` container. Throws if there's no audio track to take.
+
+  * formats: **required** — `"m4a"`, the only audio format Tapestry can produce (MP3 encoding isn't available). An empty array **throws**.
+  * options: `{ maxBytes }` — re-encode to fit within this many bytes.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### imageInfo, videoInfo, animationInfo, audioInfo
+
+Read-only facts a [`FileAsset`](#fileasset) doesn't carry. Each reads image properties / track headers (no full decode), but is asynchronous, so `await` it, and each **throws** if the asset isn't a readable file of that kind. Read the dimensions to send a service an aspect ratio, or `duration` to size a byte budget for a transform or tell a service how long a clip is. They resolve to different objects:
+
+  * `imageInfo(asset)` → `{ width, height }` — displayed dimensions in pixels. EXIF orientation is applied, so a photo stored sideways reports its upright width and height.
+  * `videoInfo(asset)` → `{ width, height, duration }` — display dimensions (rotation applied) in pixels, and length in **seconds**.
+  * `animationInfo(asset)` → `{ width, height, frameCount, duration }`.
+  * `audioInfo(asset)` → `{ duration }`.
 
 ```javascript
+// Bluesky wants an aspect ratio alongside an uploaded image: fit, measure the fitted bytes, upload.
 const fitted = await imageTransform(picked, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
 const { width, height } = await imageInfo(fitted);
 const blob = (await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json()).blob;
 images.push({ image: blob, alt: attachment.altText ?? "", aspectRatio: { width, height } });
 ```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### sharable
+
+`sharable(asset) → Promise`
+
+Resolves to a copy of a [`FileAsset`](#fileasset) with its location and other identifying metadata removed — GPS coordinates and camera/device identity — without re-compressing it: images keep their quality (lossless for JPEG/HEIC, pixel-for-pixel otherwise), and a movie or audio clip has its container rewritten rather than being re-encoded. Idempotent: an already-stripped asset resolves to itself.
+
+You rarely need this. Media the **user picks** is already stripped before your connector ever sees it (see [`FileAsset`](#fileasset) → Privacy). `sharable()` is here for the case where you re-host content you fetched yourself with [`fetch(url).file()`](#reading-the-response) — not stripped, because it's treated as external — and want to guarantee it carries no location before you upload it.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
