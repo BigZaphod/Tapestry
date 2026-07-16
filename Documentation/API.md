@@ -55,7 +55,7 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `maxDuration`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`DraftAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
 
-**Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64).
+**Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64) — plus [`sleep`](#sleep) / [`poll`](#poll) for awaiting asynchronous server work (e.g. media that keeps processing after upload).
 
 Connectors that do **not** set `minimum_app_version` to 2.0 or later keep all pre-2.0 behavior unchanged — including the old completion functions and `sendRequest()`/`sendConditionalRequest()` — and do not get `fetch()` or the new JavaScript environment functions.
 
@@ -1661,6 +1661,43 @@ Returns the `String` that was saved for that key in that store, or `null` if non
 `clearItems()`
 
 All items in the feed's storage are removed — both the local and synced stores.
+
+---
+### sleep
+
+`sleep(ms) → Promise`
+
+Waits `ms` milliseconds, then resolves — a cancellable async delay. `await` it to space out repeated work, most often to back off between polls of a service that processes an upload asynchronously (see [`poll`](#poll)). It runs on the host, so it blocks nothing, and it's cancellation-aware: if the composer that started the work closes, the wait unwinds with it rather than hanging.
+
+```javascript
+await sleep(1000);   // wait one second
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+---
+### poll
+
+`poll(fn, options) → Promise`
+
+Calls `fn()` on an escalating schedule until it returns a truthy value, then resolves with that value — the standard "wait until the server is ready" loop, built on [`sleep`](#sleep). Use it to wait out asynchronous server-side processing: upload media, then poll a status endpoint until it reports done.
+
+  * fn: a function (usually `async`) run each round. Return a falsy value to keep waiting, or a truthy value to stop — `poll` resolves with it.
+  * options: `Object` (optional), all times in milliseconds:
+      * interval: the first delay between rounds (default `1000`).
+      * backoff: the multiplier applied to the delay each round (default `2` — so 1s, 2s, 4s, …).
+      * max: a ceiling on the delay (default `8000`).
+      * timeout: the total budget; `poll` **throws** if `fn` hasn't succeeded within it (default `120000`).
+
+`fn` runs immediately on the first round (no initial wait), so an already-ready result returns at once. Because it builds on the cancellable [`sleep`](#sleep), a `poll` loop unwinds if the work is cancelled.
+
+```javascript
+// Upload, then wait for the server to finish processing (200 = done, 206 = still processing).
+const media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file }] }).json();
+await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200, { timeout: 180000 });
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### crypto.randomUUID
