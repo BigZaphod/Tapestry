@@ -53,7 +53,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
   * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
 
-**Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `maxDuration`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`DraftAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
+**Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `limits`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`DraftAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
 
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64) — plus [`sleep`](#sleep) / [`poll`](#poll) for awaiting asynchronous server work (e.g. media that keeps processing after upload).
 
@@ -711,7 +711,7 @@ draft.rules.media = {
   supportsAltText:    ["image"],   // media kinds that can carry a description
   supportsFocusPoint: ["image"],   // media kinds that get a focus-point editor
   requiresAltText:    [],          // media kinds that MUST carry a description before posting
-  maxDuration: { video: 300 }      // hard per-kind length limit, in seconds
+  limits: { video: { seconds: 300, fps: 120, frames: 36000 } }   // hard per-kind ceilings
 };
 ```
 
@@ -719,7 +719,12 @@ draft.rules.media = {
   * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
   * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
   * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
-  * **maxDuration** — a hard limit, in **seconds**, on how long a time-based attachment may be, keyed by media kind (`video`, `animation`, `audio`). When the user picks a file of that kind longer than the limit, the composer **declines it and tells the user** — it is never silently trimmed — so a too-long file never reaches your upload function. Supply it only for a kind the service caps; omit a kind to leave it unlimited.
+  * **limits** — hard per-kind ceilings, keyed by media kind (`video`, `animation`, `audio`), each an object of one or more axes:
+      * **seconds** — max duration.
+      * **frames** — max total frame count.
+      * **fps** — max frame rate.
+
+    When the user picks a file of that kind that exceeds **any** axis you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. Specify only the axes the service enforces (an absent axis is unlimited); an absent kind has no limit. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
 
 ##### rules — emoji shortcodes
 
@@ -1239,8 +1244,9 @@ Fits a [`FileAsset`](#fileasset) to a **video** slot (motion with sound), resolv
   * options: `Object` (optional):
       * maxPixels: `Number` — the longest edge is capped to this many pixels.
       * maxBytes: `Number` — the result is re-encoded to fit within this many bytes. A budget too small to hit at a watchable bitrate **throws** (so you can fall back) rather than producing a smear.
+      * maxFrameRate: `Number` — a frame-rate ceiling; a movie above it is re-encoded to cap the rate (frames are dropped, not the duration). Use it to *fit* fps rather than *decline* it — but a service that hard-rejects a rate is usually better expressed as a [`limits.fps`](#rules--media) rule, so the composer declines at intake.
 
-`maxPixels` and `maxBytes` both apply. `maxBytes` sets the bitrate for the clip's length, and the resolution is then capped to suit that bitrate — a tight budget lowers *both*, since a sharp smaller video beats a blocky large one — but never above `maxPixels`.
+`maxPixels`, `maxBytes`, and `maxFrameRate` all apply. `maxBytes` sets the bitrate for the clip's length, and the resolution is then capped to suit that bitrate — a tight budget lowers *both*, since a sharp smaller video beats a blocky large one — but never above `maxPixels`.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1252,7 +1258,7 @@ Fits a [`FileAsset`](#fileasset) to a **video** slot (motion with sound), resolv
 Fits a [`FileAsset`](#fileasset) to an **animation** slot — *silent* motion, the "gifv" — resolving to a **new** `FileAsset`. A movie's audio track is **dropped**; the output is a silent movie or a real animated GIF. Same argument shape as [`videoTransform`](#videotransform).
 
   * formats: **required** — `"mp4"`, `"mov"`, or `"gif"`: a silent movie for the first two, a genuine animated GIF for `"gif"`. An empty array **throws**.
-  * options: `{ maxPixels, maxBytes }`, exactly as [`videoTransform`](#videotransform).
+  * options: `{ maxPixels, maxBytes, maxFrameRate }`, as [`videoTransform`](#videotransform). `maxFrameRate` applies only when the output is a **movie** (`mp4`/`mov`) — a GIF's timing is per-frame delays, not a constant rate, so it's left untouched.
 
 Because it always strips audio, this is the way to "narrow" a video into a soundless clip that a service accepts as an animation (some, like Bluesky, treat an animation and a video as the same slot but this is useful for Mastodon where the distinction matters).
 
@@ -1276,7 +1282,7 @@ Fits a [`FileAsset`](#fileasset) to an **audio** slot, resolving to a **new** `F
 Read-only facts a [`FileAsset`](#fileasset) doesn't carry. Each reads image properties / track headers (no full decode), but is asynchronous, so `await` it, and each **throws** if the asset isn't a readable file of that kind. Read the dimensions to send a service an aspect ratio, or `duration` to size a byte budget for a transform or tell a service how long a clip is. They resolve to different objects:
 
   * `imageInfo(asset)` → `{ width, height }` — displayed dimensions in pixels. EXIF orientation is applied, so a photo stored sideways reports its upright width and height.
-  * `videoInfo(asset)` → `{ width, height, duration }` — display dimensions (rotation applied) in pixels, and length in **seconds**.
+  * `videoInfo(asset)` → `{ width, height, duration, frameRate, frameCount }` — display dimensions (rotation applied) in pixels, length in **seconds**, frame rate in fps, and total frame count (`round(frameRate × duration)`).
   * `animationInfo(asset)` → `{ width, height, frameCount, duration }`.
   * `audioInfo(asset)` → `{ duration }`.
 
