@@ -588,7 +588,7 @@ function historyHashtags(query) {
 async function uploadMedia(file, kind) {
 	const fitted = await fitMedia(file, kind);
 	const media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
-	await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200, { timeout: 180000 });
+	await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200);
 	return { id: media.id, file: fitted };
 }
 
@@ -600,14 +600,15 @@ async function fitMedia(file, kind) {
 	const m = (await getInstance())?.configuration?.media_attachments ?? {};
 	if (kind == "image") { return imageTransform(file, ["jpeg", "png"], { maxBytes: m.image_size_limit ?? 16777216, maxPixels: 4096 }); }
 	if (kind == "audio") { return audioTransform(file, ["m4a"], { maxBytes: m.video_size_limit ?? 103809024 }); }
-	// Video + animation go up as MP4 (an animation is a silent MP4 → served as a gifv). Mastodon REJECTS a video that
-	// exceeds its pixel-matrix (DimensionsValidationError — it does NOT downscale), so we must cap dimensions, not
-	// just size: hand the transform the byte budget (video_size_limit) and the longest-edge cap for the matrix
-	// (video_matrix_limit is a width×height total, so √ it to stay under for any aspect ratio) and let it resize.
+	// Mastodon REJECTS a video that exceeds its pixel-matrix (DimensionsValidationError — it does NOT downscale), so we
+	// must cap dimensions, not just size: hand the transform the byte budget (video_size_limit) and the longest-edge cap
+	// for the matrix (video_matrix_limit is a width×height total, so √ it to stay under for any aspect ratio) and resize.
 	const maxBytes = m.video_size_limit ?? 103809024;                           // 99 MiB (media_attachment.rb VIDEO_LIMIT)
 	const maxPixels = Math.floor(Math.sqrt(m.video_matrix_limit ?? 8294400));   // matrix (w×h, 4K default) → longest edge
 	if (kind == "video") { return videoTransform(file, ["mp4"], { maxBytes, maxPixels }); }
-	if (kind == "animation") { return animationTransform(file, ["mp4"], { maxBytes, maxPixels }); }
+	// Animation accepts GIF too, listed after mp4: a fitting GIF passes through untouched (Mastodon makes the looping
+	// gifv itself — no lossy H.264 transcode), while a silent-video-classified animation still goes to mp4.
+	if (kind == "animation") { return animationTransform(file, ["mp4", "gif"], { maxBytes, maxPixels }); }
 	throw new Error(`Can't upload media of kind "${kind}"`);
 }
 
