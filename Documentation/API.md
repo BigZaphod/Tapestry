@@ -1243,10 +1243,10 @@ Fits a [`FileAsset`](#fileasset) to a **video** slot (motion with sound), resolv
   * formats: **required** — an `Array` of container names in preference order: `"mp4"`, `"mov"`. A movie already in one of them is kept; otherwise it's converted to the **first**. An animated image has no video format of its own, so it's always transcoded to the first. An empty array **throws** — there's no "keep the input" default, since a GIF isn't a video format.
   * options: `Object` (optional):
       * maxPixels: `Number` — the longest edge is capped to this many pixels.
-      * maxBytes: `Number` — the result is re-encoded to fit within this many bytes. A budget too small to hit at a watchable bitrate **throws** (so you can fall back) rather than producing a smear.
+      * maxBytes: `Number` — the result is kept within this many bytes. A budget too small to hit at a watchable bitrate **throws** (so you can fall back) rather than producing a smear.
       * maxFrameRate: `Number` — a frame-rate ceiling; a movie above it is re-encoded to cap the rate (frames are dropped, not the duration). Use it to *fit* fps rather than *decline* it — but a service that hard-rejects a rate is usually better expressed as a [`limits.fps`](#rules--media) rule, so the composer declines at intake.
 
-`maxPixels`, `maxBytes`, and `maxFrameRate` all apply. `maxBytes` sets the bitrate for the clip's length, and the resolution is then capped to suit that bitrate — a tight budget lowers *both*, since a sharp smaller video beats a blocky large one — but never above `maxPixels`.
+`maxPixels`, `maxBytes`, and `maxFrameRate` all apply. `maxBytes` is a **ceiling, not a target**: the clip is encoded at a sensible quality for its resolution and compressed harder only when the budget is tighter than that — so a short or simple clip lands well under the limit rather than being inflated to fill it. A budget that *does* bind lowers the bitrate, then the resolution (a sharp smaller video beats a blocky large one), but never above `maxPixels`.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1691,16 +1691,16 @@ Calls `fn()` on an escalating schedule until it returns a truthy value, then res
   * fn: a function (usually `async`) run each round. Return a falsy value to keep waiting, or a truthy value to stop — `poll` resolves with it.
   * options: `Object` (optional), all times in milliseconds:
       * interval: the first delay between rounds (default `1000`).
-      * backoff: the multiplier applied to the delay each round (default `2` — so 1s, 2s, 4s, …).
-      * max: a ceiling on the delay (default `8000`).
-      * timeout: the total budget; `poll` **throws** if `fn` hasn't succeeded within it (default `120000`).
+      * backoff: the multiplier applied to the delay each round (default `2` — so 1s, 2s, then capped at `max`).
+      * max: a ceiling on the delay (default `3000`).
+      * timeout: the total budget; `poll` **throws** if `fn` hasn't succeeded within it (default `300000`).
 
 `fn` runs immediately on the first round (no initial wait), so an already-ready result returns at once. Because it builds on the cancellable [`sleep`](#sleep), a `poll` loop unwinds if the work is cancelled.
 
 ```javascript
 // Upload, then wait for the server to finish processing (200 = done, 206 = still processing).
 const media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file }] }).json();
-await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200, { timeout: 180000 });
+await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200);
 ```
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
