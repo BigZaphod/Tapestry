@@ -711,6 +711,7 @@ draft.rules.media = {
   supportsAltText:    ["image"],   // media kinds that can carry a description
   supportsFocusPoint: ["image"],   // media kinds that get a focus-point editor
   requiresAltText:    [],          // media kinds that MUST carry a description before posting
+  preferredFormats: { image: ["heic", "jpeg"], video: ["mp4"] },   // preferred output formats per kind
   limits: { video: { seconds: 300, fps: 120, frames: 36000 } }   // hard per-kind ceilings
 };
 ```
@@ -719,12 +720,13 @@ draft.rules.media = {
   * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
   * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
   * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
-  * **limits** — hard per-kind ceilings, keyed by media kind (`video`, `animation`, `audio`), each an object of one or more axes:
+  * **preferredFormats** — preference-ordered output formats per media kind, keyed like `limits` (any [kind name](#rules--attachments) is a valid key, including `image`). When the composer must transform a pick — re-encoding to fit the service, or producing a silent animation when the user drops a video's audio — it uses these as the target format set, most-preferred first. A **suggestion, not a gate**: an input already in one of your listed formats is preserved untouched rather than needlessly transcoded, and an unlisted kind falls back to the transform's own canonical default. Values are the format names each transform accepts — e.g. `image: ["heic", "jpeg"]` (also `png`/`gif`), `video: ["mp4"]` (also `mov`), `animation: ["mp4", "gif"]` (also `mov`), `audio: ["m4a"]`.
+  * **limits** — hard per-kind ceilings, keyed by the **slot kind** the attachment fills (`video`, `animation`, `audio`), each an object of one or more axes:
       * **seconds** — max duration.
       * **frames** — max total frame count.
       * **fps** — max frame rate.
 
-    When the user picks a file of that kind that exceeds **any** axis you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. Specify only the axes the service enforces (an absent axis is unlimited); an absent kind has no limit. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
+    When the user picks a file that fills that slot and exceeds **any** axis you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. The key is the **slot** the attachment occupies, not the file's own intrinsic kind: an animation (a GIF or silent mp4) widened into a `video` slot is measured against `limits.video`. Specify only the axes the service enforces (an absent axis is unlimited); an absent kind has no limit. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
 
 ##### rules — emoji shortcodes
 
@@ -914,6 +916,7 @@ A `"deferred"` connector's submit function is the same shape, except each `id` c
 
 Each media attachment carries:
 
+  * **assetType** — the flat [kind name](#rules--attachments) of the slot the attachment fills (`"image"`/`"video"`/`"animation"`/`"audio"`), the same vocabulary as [`assetType()`](#assettype). Read it to honor the user's kind choice — e.g. a GIF kept as an `animation` vs. one attached as a `video` — when a service uploads different kinds differently.
   * **altText** — the user's description (`String`), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
   * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object) (same −1…+1 convention as read-side media), when supported and set.
   * **metadata** — your service ref (whatever object you returned from `uploadAttachment`); present in **eager** mode.
@@ -964,18 +967,19 @@ async function suggest(match) {
 ---
 ### uploadAttachment
 
-`uploadAttachment(file) → DraftAsset`
+`uploadAttachment(file, kind) → DraftAsset`
 
 Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.upload: "eager"`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (In `"deferred"` mode this function is never called; you upload inside your submit function instead — see [Composing → Media](#media).)
 
   * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) and to a `fetch` upload body.
+  * kind: a `String` — the flat [kind name](#rules--attachments) of the slot the composer assigned this attachment (`"image"`/`"video"`/`"animation"`/`"audio"`), the same vocabulary as [`assetType()`](#assettype). Branch on it when a service uploads different kinds to different endpoints; ignore it otherwise.
 
 Fit the bytes to the service, upload them, and return a **`DraftAsset`** carrying the uploaded bytes plus your service ref. Throw an `Error` to report a failure — the app surfaces it and offers a retry.
 
 Do **not** apply the user's alt text or focus point here: they stay editable after this runs, so capturing them now would use stale values. They ride each attachment and are applied at submit ([Composing → Media](#media)).
 
 ```javascript
-async function uploadAttachment(file) {
+async function uploadAttachment(file, kind) {
     const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 8_000_000, maxPixels: 4096 });
     const res = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
     return DraftAsset.create(fitted, { id: res.id });   // bytes + the ref you reference at submit
