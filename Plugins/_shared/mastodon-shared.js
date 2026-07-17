@@ -360,6 +360,10 @@ async function composeDraft(actionId, target, id) {
 	const statuses = instance?.configuration?.statuses;
 	const canQuote = supportsQuotePosts(instance);
 	const shortcodes = await getCustomEmojis();   // the instance's custom emoji, for `:`-autocomplete
+	// Video/gifv limits Mastodon REJECTS over (so decline at INTAKE, not mid-post): its frame-rate cap where the
+	// instance reports one, plus MAX_VIDEO_FRAMES (a source constant, not in the config). Size + dimensions are the
+	// per-upload concern of fitMedia. A gifv obeys the same video limits.
+	const videoLimit = { fps: instance?.configuration?.media_attachments?.video_frame_rate_limit ?? 120, frames: 36000 };
 	draft.rules = {
 		characterUnit: "graphemes",
 		// The main counter's limit (default 500) spans the body AND the content warning — both count against it.
@@ -385,16 +389,17 @@ async function composeDraft(actionId, target, id) {
 		// `@` mentions and `#` hashtags autocomplete through the suggest() verb (account/hashtag search). `:` emoji is
 		// served by the shortcodes above, not here.
 		suggestions: ["@", "#"],
-		// Up to 4 images. usesUploadAttachment:false — the send verb does the /v2/media upload itself rather than the
-		// app pre-uploading each one. A quote (when the instance supports it) is its own combination, so it stays
-		// postable but isn't mixed with media (matches quote-alone behavior).
+		// Mastodon's real media rules: up to 4 images and animations MIXED (a shared budget of 4), OR one video alone,
+		// OR one audio alone — three mutually exclusive options of the one media slot. A quote (when the instance
+		// supports it) is its own combination, postable but never mixed with media.
 		attachments: {
-			slots: canQuote
-				? { media: [{ allow: ["image"], max: 4 }], quote: [{ allow: ["item"] }] }
-				: { media: [{ allow: ["image"], max: 4 }] },
+			slots: {
+				media: [{ allow: ["image", "animation"], max: 4 }, { allow: ["video"] }, { allow: ["audio"] }],
+				...(canQuote ? { quote: [{ allow: ["item"] }] } : {})
+			},
 			combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
 		},
-		media: { usesUploadAttachment: true, supportsAltText: ["image"], supportsFocusPoint: ["image"] }
+		media: { upload: "eager", supportsAltText: ["image", "animation", "video", "audio"], supportsFocusPoint: ["image", "animation"], limits: { video: videoLimit, animation: videoLimit } }
 	};
 
 	if (actionId == "reply") {
@@ -570,40 +575,53 @@ function historyHashtags(query) {
 	}
 }
 
-// Upload one image's BYTES to /v2/media and return its attachment { id }. Bytes-only on purpose — NOT alt text or
-// focus: those are user-editable up until the moment of posting, so applying them here would capture stale values
-// once the app pre-uploads early (the uploadAttachment path). They're set at SUBMIT instead, from the final draft
-// values, via `updateMediaMetadata` (PUT /v1/media/:id) — see `send`. Fits the picked bytes to the instance's
-// limits first (imageTransform is a pass-through when they already fit). A 202 means the server is still processing
-// (the media has no `url` yet) — poll until it's ready; images usually return 200 immediately, so this rarely runs
-// (there's no timer to space polls, so they're network-paced and capped).
+// Upload one attachment's BYTES to /v2/media and return its { id }. Bytes-only on purpose — NOT alt text or focus:
+// those are user-editable up until the moment of posting, so applying them here would capture stale values once the
+// app pre-uploads early (the uploadAttachment path). They're set at SUBMIT instead, from the final draft values, via
+// `updateMediaMetadata` (PUT /v1/media/:id) — see `send`. `fitMedia` fits the picked bytes to the instance's limits
+// first (each transform is a pass-through when they already fit). POST /v2/media returns 200 when done (images,
+// synchronous) or 202 when the server is still processing (video/gifv/audio) — then GET /v1/media/:id returns 206
+// while processing and 200 when ready, so poll() (escalating backoff over the cancellable sleep) waits for the 200.
 //
-// A STANDALONE, bytes-only helper on purpose: `send` calls it now (the app hands us the bytes at submit —
-// usesUploadAttachment is false), and a future `uploadAttachment` verb calls the exact same helper to pre-upload.
-async function uploadMedia(file) {
-	const limits = (await getInstance())?.configuration?.media_attachments;
-	const fitted = await imageTransform(file, ["jpeg", "png"], {
-		maxBytes: limits?.image_size_limit ?? 16777216,   // 16 MiB — the modern Mastodon default
-		maxPixels: 4096
-	});
-	let media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
-	for (let i = 0; media.url == null && i < 30; i++) {
-		media = await fetch(`${site}/api/v1/media/${media.id}`).json();
-	}
+// A STANDALONE helper on purpose: it's the same code the `uploadAttachment` verb runs to pre-upload (upload "eager")
+// and that `send` would run to upload bytes carried to submit (upload "deferred") — one path, two call sites.
+async function uploadMedia(file, kind) {
+	const fitted = await fitMedia(file, kind);
+	const media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
+	await poll(async () => (await fetch(`${site}/api/v1/media/${media.id}`).response()).status === 200, { timeout: 180000 });
 	return { id: media.id, file: fitted };
 }
 
-// The uploadAttachment verb: pre-upload one attachment's bytes during compose (the app pre-uploads when
-// usesUploadAttachment is true, for progress + a fast submit) and hand back a DraftAsset carrying the server ref.
-// Same helper `send` uses in the carried-at-submit mode — the only difference is WHEN the app calls it.
-async function uploadAttachment(file) {
-	const uploaded = await uploadMedia(file);
+// Fit picked bytes to what Mastodon accepts for their kind. Limits come from the instance's reported configuration
+// where present, falling back to Mastodon's own source-code defaults (media_attachment.rb) as the floor when it
+// didn't report them. Video and animation both go up as MP4 — an animation is a SILENT MP4, which Mastodon serves
+// back as a looping gifv.
+async function fitMedia(file, kind) {
+	const m = (await getInstance())?.configuration?.media_attachments ?? {};
+	if (kind == "image") { return imageTransform(file, ["jpeg", "png"], { maxBytes: m.image_size_limit ?? 16777216, maxPixels: 4096 }); }
+	if (kind == "audio") { return audioTransform(file, ["m4a"], { maxBytes: m.video_size_limit ?? 103809024 }); }
+	// Video + animation go up as MP4 (an animation is a silent MP4 → served as a gifv). Mastodon REJECTS a video that
+	// exceeds its pixel-matrix (DimensionsValidationError — it does NOT downscale), so we must cap dimensions, not
+	// just size: hand the transform the byte budget (video_size_limit) and the longest-edge cap for the matrix
+	// (video_matrix_limit is a width×height total, so √ it to stay under for any aspect ratio) and let it resize.
+	const maxBytes = m.video_size_limit ?? 103809024;                           // 99 MiB (media_attachment.rb VIDEO_LIMIT)
+	const maxPixels = Math.floor(Math.sqrt(m.video_matrix_limit ?? 8294400));   // matrix (w×h, 4K default) → longest edge
+	if (kind == "video") { return videoTransform(file, ["mp4"], { maxBytes, maxPixels }); }
+	if (kind == "animation") { return animationTransform(file, ["mp4"], { maxBytes, maxPixels }); }
+	throw new Error(`Can't upload media of kind "${kind}"`);
+}
+
+// The uploadAttachment verb: pre-upload one attachment's bytes during compose (the app pre-uploads when upload is
+// "eager", for progress + a fast submit) and hand back a DraftAsset carrying the server ref. `kind` is the SLOT the
+// composer assigned (one of our declared media kinds) — `fitMedia` dispatches on it to the right transform.
+async function uploadAttachment(file, kind) {
+	const uploaded = await uploadMedia(file, kind);
 	return DraftAsset.create(uploaded.file, { id: uploaded.id });
 }
 
 // Apply an attachment's alt text + focal point to an already-uploaded (but not-yet-attached) media, at SUBMIT.
 // Separate from the upload so it always reads the FINAL edited values — race-free whether the bytes were uploaded
-// just now (usesUploadAttachment false) or pre-uploaded while the user kept editing (the uploadAttachment path).
+// just now (upload "deferred") or pre-uploaded while the user kept editing (upload "eager").
 // Mastodon has no media_attributes on status CREATE (that's edit-only), so this is PUT /v1/media/:id.
 async function updateMediaMetadata(id, description, focus) {
 	await fetch(`${site}/api/v1/media/${id}`, { method: "PUT", json: { description: description, focus: focus } });
@@ -690,15 +708,15 @@ async function performAction(actionId, target, actionValue) {
 		const hasContentWarning = contentWarning != null && contentWarning.length > 0;
 		const visibility = attributes.visibility;
 
-		// Upload each attached image first (the app carried the bytes to submit — usesUploadAttachment is false),
-		// then reference the resulting ids on the status. A failed upload throws, failing the whole post.
+		// Resolve each attached media to a server id, then reference the ids on the status. A failed upload throws,
+		// failing the whole post.
 		const mediaAttachments = (draft.attachments ?? []).filter(a => a.kind == "media");
 		const mediaIds = [];
 		for (const attachment of mediaAttachments) {
-			// Mode-agnostic: a pre-uploaded attachment already carries its ref (`metadata.id`); one carried to
-			// submit still has its bytes (`file`) and is uploaded here. So `send` works whether the app pre-uploads
-			// (usesUploadAttachment true) or not — the same media flows through either way.
-			const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file)).id;
+			// Mode-agnostic: a pre-uploaded attachment already carries its ref (`metadata.id`, upload "eager"); one
+			// carried to submit still has its bytes (`file`, upload "deferred") and is uploaded here. So `send` works
+			// either way — the same media flows through.
+			const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file, attachment.assetType)).id;
 			// Apply the FINAL alt text / focal point now, at submit (see updateMediaMetadata).
 			const point = attachment.focalPoint;
 			const focus = point ? `${point.x},${point.y}` : undefined;
