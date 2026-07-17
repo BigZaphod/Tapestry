@@ -4,6 +4,7 @@
 const uriPrefix = "https://bsky.app";
 const uriPrefixContent = "https://cdn.bsky.app";
 const uriPrefixVideo = "https://video.bsky.app";
+const videoServiceDid = "did:web:video.bsky.app";
 
 async function getSessionDid() {
 	const jsonObject = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
@@ -628,15 +629,17 @@ async function buildFacets(text) {
 // the Open Graph metadata (title/description/image) and hands it over on the attachment, so this no longer fetches
 // or parses the page — it only turns the supplied image URL into an uploaded blob (the attachment carries the image
 // URL, not its bytes). Failures degrade gracefully — a card without a thumbnail — and never block the post. The
-// thumb is fetched with the 2.0 `fetch()`, kept on disk as a FileAsset, and shrunk under Bluesky's blob limit with
-// `imageTransform` before upload — the bytes never enter the connector's JS.
+// thumb is fetched with the 2.0 `fetch()`, kept on disk as a FileAsset, and shrunk under the `app.bsky.embed.external`
+// thumb ceiling with `imageTransform` before upload — the bytes never enter the connector's JS. The 1 MB / 2000 px
+// fit matches the lexicon's thumb `maxSize` (1,000,000) and the official client's link-thumbnail config; a card thumb
+// is smaller than a posted photo, hence the tighter budget than `uploadImage`.
 async function buildExternalEmbed(link) {
 	const external = { uri: link.url, title: link.title ?? link.url, description: link.subtitle ?? "" };
 
 	if (link.image != null) {
 		try {
 			const original = await fetch(link.image).file();
-			const thumb = await imageTransform(original, ["jpeg"], { maxBytes: 900000, maxPixels: 1200 });
+			const thumb = await imageTransform(original, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
 			const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: thumb }).json();
 			if (uploaded.blob != null) { external.thumb = uploaded.blob; }
 		} catch (error) {
@@ -649,23 +652,99 @@ async function buildExternalEmbed(link) {
 
 // Upload one image's bytes to a blob and return the ref plus its DISPLAY dimensions — Bluesky positions each
 // embedded image by `aspectRatio`, so the connector reads the fitted image's size with `imageInfo`. The bytes are
-// fitted under Bluesky's per-image blob limit (1 MB) first. `uploadBlob` is synchronous — the blob ref comes back
-// immediately, with none of Mastodon's `/v2/media` async-processing poll. A STANDALONE, bytes-only helper: `send`
-// calls it for media carried to submit, and `uploadAttachment` calls the same one to pre-upload during compose.
+// fitted under the `app.bsky.embed.images` per-image blob ceiling (2 MB, matching the official client's photo path)
+// first. `uploadBlob` is synchronous — the blob ref comes back immediately, with none of Mastodon's `/v2/media`
+// async-processing poll. A STANDALONE, bytes-only helper: `send` calls it for media carried to submit, and
+// `uploadAttachment` calls the same one to pre-upload during compose.
 async function uploadImage(file) {
-	const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 1000000, maxPixels: 2000 });
+	const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 2000000, maxPixels: 4000 });
 	const info = await imageInfo(fitted);
 	const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json();
 	return { blob: uploaded.blob, width: info.width, height: info.height, file: fitted };
 }
 
-// The uploadAttachment verb: pre-upload one image during compose (usesUploadAttachment is true, for progress + a
+// The account's DID plus its PDS's `did:web:` identifier (the audience a service-auth token is scoped to). Both are
+// stable per account, so they're resolved once from the session — which carries the DID document — and cached. The
+// PDS host comes from the DID doc's atproto PDS service entry, NOT from `site`: `site` may be the bsky.social
+// entryway while the repo actually lives on a `*.host.bsky.network` server, and a service token's audience must be
+// the PDS that ultimately stores the blob.
+async function accountDids() {
+	let did = getItem("did");
+	let pdsAud = getItem("pdsAud");
+	if (did == null || pdsAud == null) {
+		const session = await fetch(`${site}/xrpc/com.atproto.server.getSession`).json();
+		did = session.did;
+		const service = (session.didDoc?.service ?? []).find(entry => entry.type === "AtprotoPersonalDataServer");
+		const host = (service?.serviceEndpoint ?? site).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+		pdsAud = `did:web:${host}`;
+		setItem("did", did);
+		setItem("pdsAud", pdsAud);
+	}
+	return { did, pdsAud };
+}
+
+// Mint a short-lived service-auth JWT: a token the PDS issues authorizing ONE lexicon method (`lxm`) against ONE
+// audience (`aud`). The video service uses one to call `uploadBlob` on the user's own PDS on their behalf, so unlike
+// the session credential (which never leaves the host) this token is meant to be handed to the connector. The
+// 30-minute expiry mirrors the official client — it must outlive the whole transcode, not just the byte transfer.
+async function serviceAuthToken(aud, lxm) {
+	const exp = Math.floor(Date.now() / 1000) + 30 * 60;
+	const query = `aud=${encodeURIComponent(aud)}&lxm=${encodeURIComponent(lxm)}&exp=${exp}`;
+	const result = await fetch(`${site}/xrpc/com.atproto.server.getServiceAuth?${query}`).json();
+	return result.token;
+}
+
+// video.bsky.app gates video per-account: `canUpload` folds in both the daily quota AND eligibility (an account whose
+// PDS the service doesn't serve gets `canUpload: false`), so one check answers "can this account post video at all?".
+// Checked when the user picks a video — not at compose-open, so a text post pays nothing — and it throws before the
+// transcode, so the refusal lands immediately at pick time rather than after a long upload. Deliberately uncached:
+// the quota is dynamic, so a stale "yes"/"no" would lie.
+async function ensureCanUploadVideo() {
+	const token = await serviceAuthToken(videoServiceDid, "app.bsky.video.getUploadLimits");
+	const limits = await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getUploadLimits`, { headers: { "Authorization": `Bearer ${token}` } }).json();
+	if (!limits.canUpload) { throw new Error(limits.message ?? limits.error ?? "This account can’t upload video right now."); }
+}
+
+// Upload one video and return the processed blob ref plus its display dimensions. Unlike an image (a synchronous
+// `uploadBlob`), a video goes through Bluesky's transcoding service at video.bsky.app, which turns it into the HLS
+// stream clients actually play: confirm the account may upload, mint a PDS-scoped service token, POST the bytes to
+// the service (which wants the token as a bearer header — a cross-host request, so the host attaches no session token
+// and our header stands), then poll getJobStatus until the transcode finishes and hands back the blob it stored in
+// the user's repo. getJobStatus is unauthenticated. A STANDALONE, bytes-only helper mirroring `uploadImage`: `send`
+// calls it for a video carried to submit, `uploadAttachment` for an eager pre-upload during compose.
+async function uploadVideo(file) {
+	const { did, pdsAud } = await accountDids();
+	await ensureCanUploadVideo();
+	const fitted = await videoTransform(file, ["mp4"], { maxBytes: 300000000 });
+	const token = await serviceAuthToken(pdsAud, "com.atproto.repo.uploadBlob");
+	const name = `${nextTid()}.mp4`;
+	const started = await fetch.post(`${uriPrefixVideo}/xrpc/app.bsky.video.uploadVideo?did=${encodeURIComponent(did)}&name=${name}`,
+		{ body: fitted, headers: { "Authorization": `Bearer ${token}`, "Content-Type": "video/mp4" } }).json();
+	if (started.jobId == null) { throw new Error(started.message ?? started.error ?? "video upload did not start"); }
+	await sleep(1000);   // transcoding is never instant, so skip poll's immediate first check — it's a guaranteed miss
+	const finished = await poll(async () => {
+		const status = (await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getJobStatus?jobId=${encodeURIComponent(started.jobId)}`).json()).jobStatus;
+		if (status.state === "JOB_STATE_FAILED") { throw new Error(status.error ?? "video processing failed"); }
+		return status.state === "JOB_STATE_COMPLETED" ? status : null;
+	});
+	const info = await videoInfo(fitted);
+	return { blob: finished.blob, width: info.width, height: info.height, file: fitted };
+}
+
+// The uploadAttachment verb: pre-upload one image during compose (upload is "eager", for progress + a
 // fast submit) and hand back a DraftAsset carrying the blob ref + dimensions. A blob ref is a structured object and
 // our draft metadata is string-valued, so it rides as JSON; `send` parses it back. Same `uploadImage` helper `send`
 // uses in the carried-to-submit mode — only WHEN the app calls it differs.
-async function uploadAttachment(file) {
-	const uploaded = await uploadImage(file);
-	return DraftAsset.create(uploaded.file, { blob: JSON.stringify(uploaded.blob), width: `${uploaded.width}`, height: `${uploaded.height}` });
+// `kind` is the SLOT the composer assigned — either "image" or "video" (an animation picked here has widened to the
+// video slot, since Bluesky offers no animation kind). Both hand back a DraftAsset carrying the blob ref (JSON, since
+// our draft metadata is string-valued) plus the display dimensions `send` needs for the embed's aspectRatio. Any
+// other kind is a clean failure — a failed pre-upload rather than a silent recategorization of the attachment.
+async function uploadAttachment(file, kind) {
+	if (kind == "image" || kind == "video") {
+		const uploaded = kind == "image" ? await uploadImage(file) : await uploadVideo(file);
+		return DraftAsset.create(uploaded.file, { blob: JSON.stringify(uploaded.blob), width: `${uploaded.width}`, height: `${uploaded.height}` });
+	}
+	throw new Error(`Uploading ${kind} isn't supported yet`);
 }
 
 // Build an `app.bsky.embed.images` from the draft's image attachments. Mode-agnostic like Mastodon's send: an
@@ -682,6 +761,20 @@ async function buildImagesEmbed(attachments) {
 		images.push({ image: blob, alt: attachment.altText ?? "", aspectRatio: { width: width, height: height } });
 	}
 	return { "$type": "app.bsky.embed.images", images: images };
+}
+
+// Build an `app.bsky.embed.video` from the draft's single video attachment. Mode-agnostic like the images embed: a
+// video pre-uploaded during compose already carries its processed blob ref + dimensions (`metadata`, JSON); one
+// carried to submit still has its bytes (`file`) and is uploaded (transcode + poll) here. Alt text is read from the
+// FINAL draft and written on this record — never uploaded early, so editing it during an eager upload can't race.
+async function buildVideoEmbed(attachment) {
+	const meta = attachment.metadata;
+	const { blob, width, height } = meta != null
+		? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
+		: await uploadVideo(attachment.file);
+	const embed = { "$type": "app.bsky.embed.video", video: blob, aspectRatio: { width: width, height: height } };
+	if (attachment.altText) { embed.alt = attachment.altText; }
+	return embed;
 }
 
 // Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
@@ -707,18 +800,21 @@ function composeDraft(actionId, target, metadata) {
 		suggestions: ["@"],
 		// A post carries ONE embed — a link card, an image set, or a video, mutually exclusive — and may ALSO quote
 		// another post (recordWithMedia combines a quote with any one of those). So `media` and `quote` are separate
-		// slots that can coexist; WITHIN the media slot, a link and an image set are alternative options (exactly one
-		// active), which is what makes them mutually exclusive. Video joins the media slot later.
+		// slots that can coexist; WITHIN the media slot, link / images / video are alternative options (exactly one
+		// active), which is what makes them mutually exclusive. Bluesky has no native animated-image type, so a
+		// picked animation widens to video (the staging lattice) rather than being offered as its own kind.
 		attachments: {
 			slots: {
-				media: [ { allow: ["link"] }, { allow: ["image"], max: 4 } ],
+				media: [ { allow: ["link"] }, { allow: ["image"], max: 4 }, { allow: ["video"] } ],
 				quote: [ { allow: ["item"] } ]
 			},
 			combinations: [ ["media", "quote"] ]
 		},
-		// Bluesky has no focal point (it positions with aspectRatio alone); alt text is per-image and lives on the
-		// post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is race-free.
-		media: { usesUploadAttachment: true, supportsAltText: ["image"], supportsFocusPoint: [] }
+		// Bluesky has no focal point (it positions with aspectRatio alone); alt text is per-image/video and lives on
+		// the post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is
+		// race-free. Video is capped at 3 minutes (the official client's constant — Bluesky exposes no limits API, only
+		// a per-account daily quota); the 300 MB size cap is fitted by `uploadVideo`'s transform rather than declined.
+		media: { upload: "eager", supportsAltText: ["image", "video"], supportsFocusPoint: [], limits: { video: { seconds: 180 } } }
 	};
 
 	if (actionId == "reply") {
@@ -1019,13 +1115,18 @@ async function performAction(actionId, target, actionValue) {
 				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
 			};
 		}
-		// Attachments: the post's ONE media embed is either an image set or a link card (the composer's rules make
-		// them mutually exclusive); a quote is a `record` embed. Media + quote combine via `recordWithMedia` (the
-		// quote is the record, the media is the media); either can also stand alone.
-		const imageAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
+		// Attachments: the post's ONE media embed is a video, an image set, or a link card (the composer's rules make
+		// them mutually exclusive — the media slot holds exactly one of them); a quote is a `record` embed. Media +
+		// quote combine via `recordWithMedia` (the quote is the record, the media is the media); either can also stand
+		// alone. Media attachments carry their `assetType` ("image"/"video"), so we route by it.
+		const mediaAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
+		const videoAttachment = mediaAttachments.find(a => a.assetType === "video");
+		const imageAttachments = mediaAttachments.filter(a => a.assetType === "image");
 		const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
 		let mediaEmbed = null;
-		if (imageAttachments.length > 0) {
+		if (videoAttachment != null) {
+			mediaEmbed = await buildVideoEmbed(videoAttachment);
+		} else if (imageAttachments.length > 0) {
 			mediaEmbed = await buildImagesEmbed(imageAttachments);
 		} else if (linkAttachment != null) {
 			mediaEmbed = await buildExternalEmbed(linkAttachment);
