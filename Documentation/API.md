@@ -509,10 +509,6 @@ A `[String: String]` bag of connector state that round-trips with the draft, exa
 
 The ids of the *submit* actions that apply to this draft (the buttons shown in the composer), managed like `item.actions` with `draft.actions.add(id)` / `draft.actions.delete(id)`. Each such action must declare `target: "draft"` in `actions.json`.
 
-#### feedback: String
-
-An optional message shown to the user when a submit is returned to the composer for a correction (see [`performAction`](#performaction)).
-
 #### attributeValues: Dictionary
 
 A `[String: String]` map holding the user's current choice for each *setting attribute* declared in [`rules.attributes`](#rules--setting-attributes), keyed by the attribute's `name`. The composer seeds it from each attribute's `defaultValue` and updates it as the user changes controls; read it back when submitting — for example `draft.attributeValues.visibility`. A `multiple` attribute's value is the selected values comma-joined.
@@ -849,9 +845,8 @@ Any data an action requires can be set in (and then read from) `item.metadata` o
 
 An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer. The composer's *submit* actions declare [`target: "draft"`](#action-target), so for those `performAction`'s second argument is the edited `Draft` rather than an `Item`. A submit action then either:
 
-  * **returns the created `Item`(s)** (or nothing) — success; the composer closes.
-  * **returns a `Draft`** — sends the user back to the composer to fix something; set `draft.feedback` to explain why.
-  * **throws an `Error`** — reports a failure; the composer stays open with the draft intact.
+  * **succeeds** — returns the created `Item`(s), or nothing; the composer closes.
+  * **throws an `Error`** — reports a failure; the composer stays open with the draft intact and shows the error's [`userMessage`](#errors). Throwing is how a submit reports *anything* wrong — a validation problem the app couldn't catch, a server rejection, whatever — so the message you throw is the feedback the user sees.
 
 For example, a `reply` action opens a composer and a `send` action creates the post:
 
@@ -1792,7 +1787,7 @@ If you have used Node.js’s module loading, the approach above is very similar 
 ---
 ### raiseCondition
 
-`raiseCondition(condition, title, description)`
+`raiseCondition(type, title, message)`
 
 Raises an persistent error condition that will be presented as a fatal error to the user:
 
@@ -1805,6 +1800,15 @@ When "authorize" is used, the authorization tokens for the feed will be removed.
 When "disable" is used, the condition is displayed prominently and the user will be given an option to disable the feed.
 
 Any other `type` is ignored.
+
+---
+### console.log
+
+`console.log(message)`
+
+  * message: A value to log; shown as text.
+
+Writes a message to Tapestry's debug log for the feed, useful while developing a connector. The message only appears when the user has enabled debugging for the feed (otherwise the call is a harmless no-op), so it is safe to leave `console.log` calls in shipping code. This is always available, at every `minimum_app_version`.
 
 ---
 ## Configuration
