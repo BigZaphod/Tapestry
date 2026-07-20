@@ -52,11 +52,9 @@ async function load() {
 		endDate = new Date(parseInt(endDateTimestamp));
 	}
 
-	// The three sections are independent of each other, so run them concurrently. The bridge
-	// allows multiple in-flight requests per load, and each section delivers its items via
-	// processResults() as soon as it finishes. load() returns once all selected sections are done.
-	// (Within a section, work that has ordering dependencies — followed tags before the home query,
-	// the userId lookup before statuses, and home pagination — stays sequential.)
+	// The three sections are independent, so run them concurrently — each delivers its items via
+	// processResults() as it finishes. (Within a section, ordering-dependent work — followed tags before the
+	// home query, the userId lookup before statuses, home pagination — stays sequential.)
 	const tasks = [];
 
 	if (includeHome == "on") {

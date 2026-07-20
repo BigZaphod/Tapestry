@@ -55,7 +55,7 @@ async function queryDashboard(endDate) {
 	// 3,000 items or things older than 30 days.
 	// In use, the Tumblr API returns a limited number of items (300-ish) over a shorter timespan. Paging back
 	// through results (using offset) is fairly slow, and these requests have a 30 second timeout, so the
-	// the maxInterval is shorter than on other platforms.
+	// maxInterval is shorter than on other platforms.
 	const maxInterval = 1.5 * 24 * 60 * 60 * 1000; // days in milliseconds (approximately)
 	const maxItems = 300;
 

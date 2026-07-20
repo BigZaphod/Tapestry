@@ -37,11 +37,9 @@ async function load() {
 		setItem("didSelf", didSelf);
 	}
 
-	// The timeline and mentions sections are independent of each other, so run them concurrently.
-	// The bridge allows multiple in-flight requests per load, and each section delivers its items via
-	// processResults() as soon as it finishes. load() returns once all selected sections are done.
-	// (The session DID lookup above is a shared prerequisite, and the timeline's internal pagination
-	// chains on a cursor — both stay sequential.)
+	// The timeline and mentions sections are independent, so run them concurrently — each delivers its items
+	// via processResults() as it finishes. (The session DID lookup above is a shared prerequisite, and the
+	// timeline's cursor pagination chains — both stay sequential.)
 	const tasks = [];
 
 	if (includeHome == "on") {

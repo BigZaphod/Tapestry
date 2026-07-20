@@ -2,10 +2,8 @@
 // com.tumblr - shared
 
 async function performAction(actionId, item, actionValue) {
-	// 2.0 stores the post's fields in item.metadata; older items stored each
-	// action's fields as a JSON string under that action's value. Fall back for
-	// those. Removable a few months after 2.0 ships publicly, once pre-2.0 items
-	// have expired out of catalogs.
+	// Post fields live in item.metadata; older items stored them as a JSON string under the action value — fall
+	// back for those.
 	let metadata = item.metadata;
 	if (metadata == null) {
 		const legacy = actionValue;
@@ -835,7 +833,7 @@ function formatText(text, textFormats) {
 		}
 		return null;
 	}
-} // test()
+} // formatText
 
 // derived from: https://scicomp.stackexchange.com/a/26260
 function intersect(a, b) {

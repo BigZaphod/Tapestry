@@ -94,17 +94,8 @@ function postForItem(item) {
 					annotation = Annotation.createWithText(text);
 					annotation.uri = account["url"];
 				}
-				// NOTE: At one point we added annotations for who a post is replying to, however it was originally
-				// very inconsistent - specifically, it was added only on items from your own mentions timeline by the
-				// main mastodon connector AND for every reply in the list connector regardless who posted it. But
-				// not for the other connectors and not for other sources (like your main home timeline source) in
-				// the regular connector!
-				//
-				// I have no idea how this situation came about, but it was very inconsistent and I'm trying to unify
-				// these behaviors so that items loaded from a conversation thread, for example, end up being created
-				// the same way as items from your main timeline or from a mention - otherwise there's some behaviors
-				// in the UI where annotations can come and go depending on how an item was last downloaded which is
-				// not great.
+				// "Replying to @X" annotations are intentionally omitted — they were inconsistent across timelines vs.
+				// threads vs. mentions. Stashed below in case we revisit.
 				/*
 				else if (item.mentions != null && item.mentions.length > 0) {
 					const mentions = item.mentions;
@@ -142,11 +133,8 @@ function postForItem(item) {
 
 	post.shortcodes = shortcodes;
 
-	// Carry the post's visibility, language, and content warning so a reply can default to them (Mastodon doesn't
-	// inherit any of them server-side — the composer replicates the web client: default a reply to the parent's
-	// visibility, never wider, prefill its language, and carry over its content warning). `item` here is the
-	// displayed post (a boost was already unwrapped above). Only the author-written spoiler carries over — a bare
-	// `sensitive` flag has no text to prefill and the web client doesn't propagate it to replies either.
+	// Carry visibility/language/content warning so a reply can default to the parent's — Mastodon doesn't inherit
+	// any of them server-side. Only an author-written spoiler carries over (a bare `sensitive` flag has no text).
 	post.metadata = { id: item.id, visibility: item["visibility"] ?? "public" };
 	if (item["language"] != null) { post.metadata.language = item["language"]; }
 	if (spoilerText != null && spoilerText.length > 0) { post.metadata.contentWarning = spoilerText; }
@@ -155,9 +143,8 @@ function postForItem(item) {
 
 	post.actions.add(item?.favourited ? "unfavorite" : "favorite");
 	post.actions.add(item?.reblogged ? "unboost" : "boost");
-	// Quote only where the instance supports it (Mastodon 4.5+ / API v7 — resolved once per load into `quoteCapable`).
-	// The quoted post's own quote-approval policy may still reject the quote at send — the server enforces that,
-	// surfaced as an error. Grouped with boost/unboost in actions.json so they share one cell button.
+	// Quote only where the instance supports it (Mastodon 4.5+ / API v7). The quoted post's own approval policy may
+	// still reject it at send — the server enforces that, surfaced as an error.
 	if (quoteCapable) { post.actions.add("quote"); }
 	post.actions.add(item?.bookmarked ? "unbookmark" : "bookmark");
 	post.actions.add(item?.replies_count > 0 ? "replies" : "thread");
@@ -286,12 +273,9 @@ function postForItem(item) {
 // However, most actions will not work unless authenticated! So be sure to
 // edit the actions.json file for each connector and only include the ones
 // that can actually work for the non-authorized connector variants!
-// The cached `/api/v2/instance` record. This endpoint is the instance's capability sheet — status limits (the
-// character counter), media limits + supported types + alt-text length (attachments), poll limits, available
-// languages, and more — so we cache the WHOLE record once and read fields from it as each feature needs them,
-// rather than re-fetching per field. It's a PUBLIC endpoint, so this works for the unauthenticated variants too.
-// Soft 1-week TTL (it changes rarely); on failure returns the last good cache, else null so callers can default.
-// A stale or missing record must never block composing.
+// Cached `/api/v2/instance` — the instance's capability sheet (status/media/poll limits, languages, …). Fetch the
+// whole record once and read fields as needed. Public endpoint, so it works unauthenticated too. Weekly TTL; on
+// failure falls back to the last good cache, else null.
 async function getInstance() {
 	const TTL = 7 * 24 * 60 * 60 * 1000;   // one week
 	const cached = getItem("instance");
@@ -310,10 +294,8 @@ async function getInstance() {
 	}
 }
 
-// The instance's custom emoji, mapped to the composer's `rules.shortcodes` shape for `:`-autocomplete — a bounded
-// local set, so no suggest() verb is involved. Only picker-visible emoji are offered, keyed to their static image.
-// Soft 1-week TTL like the instance record (custom emoji change rarely); a failed fetch degrades to stale cache, else
-// an empty list, so composing never blocks on it (and an empty list just means the `:` trigger stays inactive).
+// The instance's custom emoji, for `:`-autocomplete. Only picker-visible ones, keyed to their static image. Weekly
+// TTL; a failed fetch degrades to stale cache, else an empty list.
 async function getCustomEmojis() {
 	const TTL = 7 * 24 * 60 * 60 * 1000;   // one week
 	const cached = getItem("customEmojis");
@@ -335,11 +317,8 @@ async function getCustomEmojis() {
 	}
 }
 
-// Whether the current (authenticated) instance can author quote posts (Mastodon 4.5+ / API v7). Resolved ONCE per
-// load (see load) and cached module-side so every postForItem path — home/mentions/statuses, the thread action, and
-// the just-posted item — offers the quote action consistently, without threading a flag through each call site. A
-// plain module global earns its keep here: it defaults false (no quote), and load always runs before any item can be
-// acted on, so the natural flow keeps it correct. `supportsQuotePosts` stays a pure check on the instance record.
+// Whether this instance can author quote posts (Mastodon 4.5+ / API v7). Resolved once per load and cached so every
+// postForItem offers the quote action consistently. Defaults false.
 let quoteCapable = false;
 
 function supportsQuotePosts(instance) {
@@ -353,9 +332,8 @@ async function composeDraft(actionId, target, id) {
 	draft.metadata = { idempotencyKey: crypto.randomUUID() };
 	draft.actions.add("send");
 
-	// How the app counts characters, matching the server: the instance's own max, every URL weighed the way the
-	// server does, and a mention counting only its "@user" (the @domain is free). Per-instance values come from the
-	// cached instance record; the defaults cover a failed fetch or a server predating /api/v2.
+	// Character counting matched to the server: the instance's max, URLs weighed as the server does, a mention
+	// counting only its "@user". Values from the cached instance record; defaults cover a failed fetch.
 	const instance = await getInstance();
 	const statuses = instance?.configuration?.statuses;
 	const canQuote = supportsQuotePosts(instance);
@@ -386,8 +364,7 @@ async function composeDraft(actionId, target, id) {
 		},
 		attributes: composeAttributes(canQuote),
 		shortcodes: shortcodes,
-		// `@` mentions and `#` hashtags autocomplete through the suggest() verb (account/hashtag search). `:` emoji is
-		// served by the shortcodes above, not here.
+		// `@` and `#` autocomplete via suggest() (account/hashtag search); `:` emoji is served by `shortcodes` above.
 		suggestions: ["@", "#"],
 		// Mastodon's real media rules: up to 4 images and animations MIXED (a shared budget of 4), OR one video alone,
 		// OR one audio alone — three mutually exclusive options of the one media slot. A quote (when the instance
@@ -407,15 +384,13 @@ async function composeDraft(actionId, target, id) {
 		draft.body = await replyMentionPrefill(id);
 		draft.context = [target];
 		draft.metadata.replyTo = id;
-		// Inherit the parent's visibility/language/content warning where the item carried them (best-effort). Setting
-		// draft.contentWarning is enough to surface the field — the composer auto-reveals a hidden content field whose
-		// value is non-empty — and `send` re-applies it as spoiler_text + sensitive.
+		// Inherit the parent's visibility/language/content warning where present (best-effort); `send` re-applies the
+		// CW as spoiler_text + sensitive.
 		if (target?.metadata?.visibility != null) { draft.attributeValues.visibility = target.metadata.visibility; }
 		if (target?.metadata?.language != null) { draft.attributeValues.language = target.metadata.language; }
 		if (target?.metadata?.contentWarning != null) { draft.contentWarning = target.metadata.contentWarning; }
 	} else if (actionId == "quote") {
-		// A quote is a new top-level post embedding another. The full item rides `attachments` for the composer
-		// preview; the status id used to build the quote at send rides `metadata`, like the reply ref.
+		// A quote is a new post embedding another: the item shows as a preview attachment, its id rides metadata.
 		draft.header = "Quote " + (target.author?.name ?? target.author?.username ?? "post");
 		draft.attachments = [target];
 		draft.metadata.quotedId = id;
@@ -426,11 +401,9 @@ async function composeDraft(actionId, target, id) {
 	return draft;
 }
 
-// The composer controls Mastodon offers: visibility, an optional content warning (which also marks the post
-// sensitive), post language, and — only on quote-capable instances (4.5+ / API v7) — who may quote the post. The app
-// renders these and writes the chosen values onto draft.attributeValues; `send` reads them back. quotePolicy is only
-// meaningful for public/unlisted posts — the server forces private/direct posts to "nobody" — which the
-// `availableWhen` expresses (and `send` re-guards).
+// The setting controls Mastodon offers: visibility, post language, and — only on quote-capable instances (4.5+ /
+// API v7) — who may quote. quotePolicy applies only to public/unlisted posts (the server forces private/direct to
+// "nobody"), expressed via `availableWhen` and re-guarded in `send`.
 function composeAttributes(canQuote) {
 	const attributes = [
 		{
@@ -459,12 +432,9 @@ function composeAttributes(canQuote) {
 	return attributes;
 }
 
-// The @-mentions to prefill into a reply: the post's author plus everyone it mentions (the Mastodon convention is
-// to keep the whole thread in the loop), minus yourself, deduped. Fetched fresh from the status so an edited
-// mention list is current — the composer already shows a loading state while this runs, and a future context view
-// can extend this same lookup. The fetch is load-bearing: if it fails, the error propagates and cancels the reply.
-// That deliberately covers the deleted-post case — better to fail than open a composer to reply to a post that's
-// gone (a cached-author fallback would silently mask it). Returns a trailing-spaced string, or "".
+// The @-mentions to prefill into a reply: the post's author plus everyone it mentions (Mastodon convention keeps the
+// whole thread in the loop), minus yourself, deduped. Fetched fresh so the list is current — and if the fetch fails
+// the error cancels the reply, which deliberately covers replying to a since-deleted post. Trailing-spaced, or "".
 async function replyMentionPrefill(id) {
 	const myUserId = getItem("userId");
 	const status = await fetch(`${site}/api/v1/statuses/${id}`).json();
@@ -480,11 +450,8 @@ async function replyMentionPrefill(id) {
 	return tokens.length > 0 ? tokens.join(" ") + " " : "";
 }
 
-// The suggest() verb: autocomplete for the markers the composer declares (rules.suggestions, set in composeDraft).
-// `match` is the whole token as typed, marker included ("@ali", "#swi"); we branch on the marker and return rows the
-// composer shows verbatim. Each row's insertText is the bare mention/hashtag — the composer appends the trailing space
-// itself. A bare "@"/"#" (no query yet) returns nothing rather than dumping a huge list. Failures just propagate: the
-// host logs a failed lookup and shows no rows, so there's nothing to catch here.
+// Autocomplete for the `@`/`#` markers: branch on the marker. A bare marker (no query yet) returns nothing rather
+// than dumping a huge list.
 async function suggest(match) {
 	const marker = match[0];
 	const query = match.slice(1);   // drop the marker; "" for a bare "@" / "#"
@@ -541,12 +508,9 @@ function usageDetail(tag) {
 	return `${total.toLocaleString()} recent ${total === 1 ? "post" : "posts"}`;
 }
 
-// A most-recent-first history of hashtags posted FROM Tapestry, preserving the casing the user typed — the same trick
-// the Mastodon web composer uses (the server's search can't provide it; the casing lives in each user's own history).
-// Deduped case-insensitively and capped. Stored SYNCED (setItem/getItem `synced: true`) so it follows the account
-// across the user's devices via iCloud. Best-effort: on an app without synced storage it just falls back to local, and
-// a hiccup here must NEVER fail a post that already succeeded, hence the catch (unlike suggest, which lets errors
-// propagate to the host).
+// A most-recent-first history of hashtags you've posted, preserving your casing — the same trick the Mastodon web
+// composer uses (its search returns lowercased tags; the casing lives only in your own history). Deduped
+// case-insensitively, capped, stored synced. Best-effort — a hiccup here must never fail a post that already succeeded.
 const TAG_HISTORY_MAX = 100;
 
 function rememberHashtags(text) {
@@ -575,16 +539,10 @@ function historyHashtags(query) {
 	}
 }
 
-// Upload one attachment's BYTES to /v2/media and return its { id }. Bytes-only on purpose — NOT alt text or focus:
-// those are user-editable up until the moment of posting, so applying them here would capture stale values once the
-// app pre-uploads early (the uploadAttachment path). They're set at SUBMIT instead, from the final draft values, via
-// `updateMediaMetadata` (PUT /v1/media/:id) — see `send`. `fitMedia` fits the picked bytes to the instance's limits
-// first (each transform is a pass-through when they already fit). POST /v2/media returns 200 when done (images,
-// synchronous) or 202 when the server is still processing (video/gifv/audio) — then GET /v1/media/:id returns 206
-// while processing and 200 when ready, so poll() (escalating backoff over the cancellable sleep) waits for the 200.
-//
-// A STANDALONE helper on purpose: it's the same code the `uploadAttachment` verb runs to pre-upload (upload "eager")
-// and that `send` would run to upload bytes carried to submit (upload "deferred") — one path, two call sites.
+// Fit + upload one attachment's bytes to /v2/media, returning its { id }. POST /v2/media returns 200 for images
+// (synchronous) or 202 for video/gifv/audio still processing — then GET /v1/media/:id returns 206 while processing,
+// 200 when ready, so poll() waits for the 200. Alt text / focus are NOT set here (they stay editable until posting);
+// `send` applies them at submit.
 async function uploadMedia(file, kind) {
 	const fitted = await fitMedia(file, kind);
 	const media = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
@@ -612,26 +570,21 @@ async function fitMedia(file, kind) {
 	throw new Error(`Can't upload media of kind "${kind}"`);
 }
 
-// The uploadAttachment verb: pre-upload one attachment's bytes during compose (the app pre-uploads when upload is
-// "eager", for progress + a fast submit) and hand back a DraftAsset carrying the server ref. `kind` is the SLOT the
-// composer assigned (one of our declared media kinds) — `fitMedia` dispatches on it to the right transform.
-async function uploadAttachment(file, kind) {
-	const uploaded = await uploadMedia(file, kind);
-	return DraftAsset.create(uploaded.file, { id: uploaded.id });
+// Pre-upload one attachment during compose; return its server ref. `attachedAs` is the media kind — `fitMedia`
+// dispatches on it.
+async function uploadAttachment(file, attachedAs) {
+	const uploaded = await uploadMedia(file, attachedAs);
+	return UploadedAsset.create(uploaded.file, { id: uploaded.id });
 }
 
-// Apply an attachment's alt text + focal point to an already-uploaded (but not-yet-attached) media, at SUBMIT.
-// Separate from the upload so it always reads the FINAL edited values — race-free whether the bytes were uploaded
-// just now (upload "deferred") or pre-uploaded while the user kept editing (upload "eager").
-// Mastodon has no media_attributes on status CREATE (that's edit-only), so this is PUT /v1/media/:id.
+// Apply alt text + focal point at submit, from the final edited values. Mastodon has no media_attributes on status
+// CREATE (edit-only), so it's a PUT /v1/media/:id on the uploaded media.
 async function updateMediaMetadata(id, description, focus) {
 	await fetch(`${site}/api/v1/media/${id}`, { method: "PUT", json: { description: description, focus: focus } });
 }
 
 async function performAction(actionId, target, actionValue) {
-	// 2.0 stores the status id on the item's metadata; older items stored it as the
-	// action's value. Fall back for those. Removable a few months after 2.0
-	// ships publicly, once pre-2.0 items have expired out of catalogs.
+	// Status id lives on item.metadata; older items stored it as the action value — fall back for those.
 	// `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
 	const id = target?.metadata?.id ?? actionValue;
 
@@ -701,8 +654,7 @@ async function performAction(actionId, target, actionValue) {
 		return composeDraft(actionId, target, id);
 	}
 	else if (actionId == "send") {
-		// Here `target` is the DRAFT (a target:"draft" action). Create the status and return the new item; it
-		// lands in the timeline on the next refresh.
+		// Here `target` is the draft. Create the status and return the new item.
 		const draft = target;
 		const attributes = draft.attributeValues ?? {};
 		const contentWarning = draft.contentWarning;   // a first-class content field, not an attribute
@@ -714,14 +666,12 @@ async function performAction(actionId, target, actionValue) {
 		const mediaAttachments = (draft.attachments ?? []).filter(a => a.kind == "media");
 		const mediaIds = [];
 		for (const attachment of mediaAttachments) {
-			// Mode-agnostic: a pre-uploaded attachment already carries its ref (`metadata.id`, upload "eager"); one
-			// carried to submit still has its bytes (`file`, upload "deferred") and is uploaded here. So `send` works
-			// either way — the same media flows through.
-			const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file, attachment.assetType)).id;
+			// Reference the ref if the media was pre-uploaded; otherwise upload its bytes now.
+			const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file, attachment.mediaType)).id;
 			// Apply the FINAL alt text / focal point now, at submit (see updateMediaMetadata).
 			const point = attachment.focalPoint;
 			const focus = point ? `${point.x},${point.y}` : undefined;
-			if (attachment.altText || focus) { await updateMediaMetadata(id, attachment.altText, focus); }
+			if (attachment.text || focus) { await updateMediaMetadata(id, attachment.text, focus); }
 			mediaIds.push(id);
 		}
 
