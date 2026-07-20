@@ -83,7 +83,9 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     let metadata = { uri: item.post.uri, cid: item.post.cid };
     // Capture the thread root so a reply can set both `parent` (this post) and `root`. A top-level post is its own
     // root; a reply's root comes from the feed item's reply ref (fall back to this post if it's missing/blocked).
-    const replyRoot = item.reply?.root;
+    // Posts built from a thread response have no feed-level reply ref at all, so fall back to the post record's own
+    // reply ref — without it every post in a thread would claim to be its own root and mis-thread a reply.
+    const replyRoot = item.reply?.root ?? item.post.record?.reply?.root;
     if (replyRoot?.uri != null && replyRoot?.cid != null) {
         metadata.rootUri = replyRoot.uri;
         metadata.rootCid = replyRoot.cid;
@@ -221,6 +223,12 @@ function postForEmbeddedRecord(record) {
         const labels = record.labels.map((label) => { return label?.val ?? "" }).join(", ");
         post.contentWarning = `Labeled: ${labels}`;
     }
+    // A quoted post is a `viewRecord`, which carries counts but no `viewer` state — so there's no way to tell whether
+    // you've already liked or reposted it, nor to undo either without the record keys that state supplies. Give it
+    // only what opening its thread needs; `performAction` rebuilds the post from the thread response, where the
+    // viewer state is authoritative, so the full action set arrives there rather than being guessed at here.
+    post.metadata = { uri: record.uri, cid: record.cid };
+    post.actions.add(record.replyCount > 0 ? "replies" : "thread");
 
     return post;
 }
@@ -1040,9 +1048,14 @@ async function performAction(actionId, target, actionValue) {
 		let parents = parentsForItem(firstItem, true);
 		results.push(...parents);
 
-		results.push(target);
+		// Rebuild the target from the thread response instead of reusing the item that launched the action: only the
+		// thread's own postView carries `viewer`, so this is where a post that arrived without one — a quote embed,
+		// say — picks up its real like/repost state and stops being the one actionless post in its own thread. Fall
+		// back to the original when the node is blocked or filtered out by the user's settings.
+		const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true) : null;
+		results.push(rebuiltTarget ?? target);
 
-		for (const reply of firstItem.replies) {
+		for (const reply of firstItem.replies ?? []) {
 			results.push(postForItem(reply, true));
 		}
 		return results;
