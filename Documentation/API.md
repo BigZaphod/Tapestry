@@ -53,7 +53,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * a failed request **throws** an [`HTTPError`](#errors) you can catch and inspect (`status`, `response`) — or call [`.response()`](#reading-the-response) to judge the status yourself.
   * `sendRequest()` and `sendConditionalRequest()` are **not provided** when targeting 2.0 or later — like the old completion functions, calling them is an immediate error rather than a silent legacy path.
 
-**Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `limits`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`DraftAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
+**Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `limits`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`UploadedAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
 
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64) — plus [`sleep`](#sleep) / [`poll`](#poll) for awaiting asynchronous server work (e.g. media that keeps processing after upload).
 
@@ -310,7 +310,7 @@ The supported file formats and extensions for images are:
   * PNG (Portable Network Graphic) - .png
   * TIFF (Tagged Image File Format) - .tiff or .tif
   * JPEG (Joint Photographic Experts Group) - .jpeg or .jpg
-  * GIF (Graphic Interchange Format) - .gif (pronounced with a [soft G](https://en.wikipedia.org/wiki/Pronunciation_of_GIF)
+  * GIF (Graphic Interchange Format) - .gif (pronounced with a [soft G](https://en.wikipedia.org/wiki/Pronunciation_of_GIF))
   * BMP (Windows Bitmap Format) - .bmp or .BMPf
   * Windows Icon - .ico
   * Windows Cursor - .cur
@@ -334,13 +334,21 @@ The supported file formats and extensions for audio and video are:
 
 An HLS playlist (.m3u8) should be specified explicitly as "video" or "audio" since Tapestry has no mechanism to examine the contents of the playlist.
 
-#### url: String (required)
+#### url: String (required for timeline media)
 
 A string containing the URL for the media on the Internet. A Base64 encoded data URL can be used, if needed.
 
+A media object carries **exactly one of `url` or `file`** as its content — that is the *only* conditional field on it. Timeline media (and any media already on the service) use `url`; a media attachment the user added while composing that isn't on the service yet has no URL and carries `file` instead. Everything else documented here applies to a media object wherever it appears — a timeline item's attachment, a quote-post's, or one on a [`draft`](#draft).
+
+#### file: FileAsset
+
+The media's raw bytes, as a [`FileAsset`](#fileasset) — present instead of `url` for a media attachment the user added while composing that isn't on the service yet. You only encounter it on a [`draft`](#draft) at submit: in `"deferred"` mode it's the original bytes for you to upload; in `"eager"` mode it's the file your [`uploadAttachment`](#uploadattachment) produced (already uploaded — reference the ref in `metadata` rather than re-uploading). See [Composing → Media](#media).
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 #### thumbnail: String
 
-A string containing the URL for a lower resolution copy of the media. This is assumed to be an image file.
+A string containing the URL for a lower resolution copy of the media. This is assumed to be an image file. *(Timeline media only — not set on a `draft`'s media.)*
 
 #### mimeType: String
 
@@ -350,9 +358,17 @@ If this value isn't provided, the file name extension for `url` will be used. If
 
 Note that playlists, such as .m3u8, will be assumed to be audio (based upon the file extension). If the playlist contains video, set the `mimeType` explicitly to "video/mp4".
 
+*(Timeline media only — not set on a `draft`'s media; a connector determines the format itself when it uploads.)*
+
+#### mediaType: String
+
+The media's behavior category — one of `"image"`, `"video"`, `"animation"`, or `"audio"` — the same taxonomy used across composing (see [`attachedAs`](#uploadattachment) and the attachment [rules](#rules--attachments)). It is *distinct* from `mimeType` and the two coexist: a GIF is `mimeType: "image/gif"` but `mediaType: "animation"`. On a composed attachment it's the kind the file was attached *as*; on a timeline attachment it's optional — Tapestry derives a category from `mimeType`/`url` when it's absent.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 #### blurhash: String
 
-A string that provides a placeholder image.
+A string that provides a placeholder image. *(Timeline media only — not set on a `draft`'s media.)*
 
 #### text: String
 
@@ -360,7 +376,7 @@ A string that describes the media (for accessibility)
 
 #### aspectSize: Object
 
-An object with `width` and `height` properties. The values are used to optimize the media placement in the timeline.
+An object with `width` and `height` properties. The values are used to optimize the media placement in the timeline. *(Timeline media only — not set on a `draft`'s media; at submit, measure the bytes with [`imageInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) / [`videoInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) if a service wants an aspect ratio.)*
 
 #### focalPoint: Object
 
@@ -368,10 +384,18 @@ An object with `x` and `y` properties marking the point to keep in view when the
 
 This is Tapestry's standard focus-point convention — it matches Mastodon's. A service that uses a different range or orientation (e.g. `0…1`, or a top-down `y`) should have its connector rescale to and from this convention when it reads and writes the value.
 
+#### metadata: Dictionary
+
+A per-attachment `[String: String]` bag for the connector's own use, mirroring [`item.metadata`](#metadata-dictionary). It is most useful across the compose/edit round-trip — tagging an attachment with the service id an action needs to reference it — and is empty on ordinary timeline attachments.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 ---
 ### LinkAttachment
 
 A link attachment's `kind` is `"link"`; the factory sets it — include it if you build a literal.
+
+> On a [`draft`](#draft), only `url` is guaranteed: the composer auto-discovers a link card as the user types a URL and fills in the fields below **best-effort** from the linked page's Open Graph metadata, so any of them may be absent — and a card that hasn't finished resolving (or whose fetch failed) carries just its `url`.
 
 #### url: String (required)
 
@@ -413,6 +437,12 @@ A string that provides a placeholder image.
 
 An object with `width` and `height` properties, typically from Open Graph [og:image:width](https://ogp.me/#structured) and [og:image:height](https://ogp.me/#structured).
 
+#### metadata: Dictionary
+
+A per-attachment `[String: String]` bag for the connector's own use, mirroring [`item.metadata`](#metadata-dictionary) — most useful across the compose/edit round-trip. See `MediaAttachment`'s `metadata`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 ---
 ### PollAttachment
 
@@ -439,6 +469,12 @@ An optional date that the poll ends. If not specified, Tapestry renders the poll
 Set to `true` if the poll allows mutliple choices or not.
 
 > **Compatibility:** Requires `minimum_app_version` >= 1.3.
+
+#### metadata: Dictionary
+
+A per-attachment `[String: String]` bag for the connector's own use, mirroring [`item.metadata`](#metadata-dictionary) — most useful across the compose/edit round-trip. See `MediaAttachment`'s `metadata`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### PollOption
@@ -716,7 +752,7 @@ draft.rules.media = {
   * **supportsAltText** — the [media kind names](#rules--attachments) that can carry alt text; the composer offers a description editor only for these. Omitted/empty ⇒ the service takes no descriptions.
   * **supportsFocusPoint** — the media kinds that get a focus-point editor (the crop anchor the service keeps in view). Omitted/empty ⇒ none.
   * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
-  * **preferredFormats** — preference-ordered output formats per media kind, keyed like `limits` (any [kind name](#rules--attachments) is a valid key, including `image`). When the composer must transform a pick — re-encoding to fit the service, or producing a silent animation when the user drops a video's audio — it uses these as the target format set, most-preferred first. A **suggestion, not a gate**: an input already in one of your listed formats is preserved untouched rather than needlessly transcoded, and an unlisted kind falls back to the transform's own canonical default. Values are the format names each transform accepts — e.g. `image: ["heic", "jpeg"]` (also `png`/`gif`), `video: ["mp4"]` (also `mov`), `animation: ["mp4", "gif"]` (also `mov`), `audio: ["m4a"]`.
+  * **preferredFormats** — preference-ordered output formats per media kind, keyed like `limits` (any [kind name](#rules--attachments) is a valid key, including `image`). When the composer must transform a file the user picked — re-encoding to fit the service, or producing a silent animation when the user drops a video's audio — it uses these as the target format set, most-preferred first. A **suggestion, not a gate**: an input already in one of your listed formats is preserved untouched rather than needlessly transcoded, and an unlisted kind falls back to the transform's own canonical default. Values are the format names each transform accepts — e.g. `image: ["heic", "jpeg"]` (also `png`/`gif`), `video: ["mp4"]` (also `mov`), `animation: ["mp4", "gif"]` (also `mov`), `audio: ["m4a"]`.
   * **limits** — hard per-kind ceilings, keyed by the **slot kind** the attachment fills (`video`, `animation`, `audio`), each an object of one or more axes:
       * **seconds** — max duration.
       * **frames** — max total frame count.
@@ -730,8 +766,8 @@ draft.rules.media = {
 `:name` token the app matches it against this list *locally* and shows a scrollable menu of matches with their images;
 picking one inserts the plain `:shortcode:` text, which the service renders to the emoji on display. It is a **bounded
 local set** — the connector hands over the whole list up front, so there is no per-keystroke lookup and nothing to
-call. (Declare it wherever you build the rest of `rules`; for a Mastodon-style service, source it
-from the instance's custom-emoji list.)
+call. (Declare it wherever you build the rest of `rules`; a service with its own custom-emoji set would source it
+from that list.)
 
 ```javascript
 draft.rules.shortcodes = [
@@ -886,8 +922,10 @@ See the section on `actions.json` for more information on how to define and perf
 
 A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a `kind: "media"` object per attachment, of whichever kinds (`image`, `video`, `animation`, `audio`) your [attachment rules](#rules--attachments) allow. Your submit function turns each into the service's wire format. What an attachment carries — and how your submit function reads it — depends on the [`rules.media.upload`](#rules--media) mode you declared. A connector implements **one** mode, not both:
 
-  * **`"eager"`** (the default) — the app pre-uploaded each attachment during composing via your [`uploadAttachment`](#uploadattachment) function, so the attachment carries the **`metadata`** you returned (your service ref), and your submit function just references it.
-  * **`"deferred"`** — the app did not pre-upload; the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)), and your submit function uploads them itself.
+  * **`"eager"`** (the default) — the app pre-uploaded each attachment during composing via your [`uploadAttachment`](#uploadattachment) function, so the attachment carries the **`metadata`** you returned (your service ref) — your submit function just references it. (It also still carries the uploaded `file`, in case you want it; normally you don't.)
+  * **`"deferred"`** — the app did not pre-upload, so the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)) and an empty `metadata` bag; your submit function uploads the bytes itself.
+
+The submit-time shape is the **same** either way — `file` + `metadata` — so the only thing the mode changes is whether `uploadAttachment` ran (which fills in the ref and swaps `file` to the transformed upload). You never have to *detect* the mode: you chose it.
 
 A submit function for the default eager mode reads the refs:
 
@@ -899,7 +937,7 @@ else if (actionId == "send") {
         const id = attachment.metadata.id;   // the ref your uploadAttachment returned
         // Apply the user's alt text / focus point HERE, at submit — NOT at upload: they stay editable after a
         // pre-upload, so applying them earlier would capture stale values. (Mastodon: PUT /api/v1/media/:id.)
-        if (attachment.altText != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
+        if (attachment.text != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
         mediaIds.push(id);
     }
     const post = await fetch.post(`${site}/api/v1/statuses`, { json: { status: draft.body, media_ids: mediaIds }, headers: { … } }).json();
@@ -909,13 +947,13 @@ else if (actionId == "send") {
 
 A `"deferred"` connector's submit function is the same shape, except each `id` comes from uploading the bytes right there — `const id = await uploadMedia(attachment.file)` — the very code an eager connector runs inside `uploadAttachment`. The alt-text / focus-point step is identical either way.
 
-Each media attachment carries:
+A media attachment is the **same [`MediaAttachment`](#mediaattachment) object** documented above — one media shape everywhere. Composing just populates a few of its fields differently:
 
-  * **assetType** — the flat [kind name](#rules--attachments) of the slot the attachment fills (`"image"`/`"video"`/`"animation"`/`"audio"`), the same vocabulary as [`assetType()`](#assettype). Read it to honor the user's kind choice — e.g. a GIF kept as an `animation` vs. one attached as a `video` — when a service uploads different kinds differently.
-  * **altText** — the user's description (`String`), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
-  * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object) (same −1…+1 convention as read-side media), when supported and set.
-  * **metadata** — your service ref (whatever object you returned from `uploadAttachment`); present in **eager** mode.
-  * **file** — the [`FileAsset`](#fileasset) bytes; present in **deferred** mode.
+  * **content** — an attachment the user added carries its bytes as a [`FileAsset`](#fileasset) in `file` (in `"eager"` mode this is the file your `uploadAttachment` produced; in `"deferred"` mode it's the original); an attachment that's already on the service — for example, media already on a post the user is editing — carries a `url` instead. So it's `file` **or** `url`, the one conditional field.
+  * **mediaType** — the kind the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`) — the same value [`uploadAttachment`](#uploadattachment) got as `attachedAs` (the app's cast target after any widening, not the file's intrinsic type — [`assetType()`](#assettype) reports that). Honor it when a service uploads kinds differently.
+  * **text** — the user's alt-text description (the same `text` field as on any media), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
+  * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object), when supported and set.
+  * **metadata** — your service ref bag. It is **always present** (an empty `{}` when there's no ref yet), so don't read anything into whether the property exists — read the id/cid you stashed: if it's there (you uploaded the media via `uploadAttachment`, or it's already on the service because the user is editing a post), reference it; if the bag is empty, upload the `file`. Since you chose your upload mode, you already know which case applies.
 
 Before uploading raw bytes — in a deferred connector, or when re-hosting remote media — fit them to the service's limits with the transform for the attachment's kind — [`imageTransform`](#imagetransform), [`videoTransform`](#videotransform), [`animationTransform`](#animationtransform), or [`audioTransform`](#audiotransform) (each a pass-through when the input already fits) — and upload with a multipart `fetch` body (see [`fetch` Options](#options)). In eager mode that fitting happens inside `uploadAttachment`, so a deferred connector's `uploadMedia` is just that function's body run at submit time — the two modes share the same upload code, called at different times.
 
@@ -953,7 +991,7 @@ async function suggest(match) {
   * **insertText** — the text that replaces the typed token when the row is picked. Required. The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`).
   * **detail** — an optional secondary line (a display name, a post count).
   * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
-  * **id** — an optional stable identifier for the pick (an account id), carried for later use.
+  * **id** — an optional stable identifier for the selected suggestion (an account id), carried for later use.
 
 `suggest()` is **best-effort** and fired on every keystroke, so it should return quickly. It does **not** need to guard its own errors: a thrown failure is logged by the host and simply shows no rows — it never interrupts composing. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
 
@@ -962,26 +1000,26 @@ async function suggest(match) {
 ---
 ### uploadAttachment
 
-`uploadAttachment(file, kind) → DraftAsset`
+`uploadAttachment(file, attachedAs) → UploadedAsset`
 
 Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.upload: "eager"`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (In `"deferred"` mode this function is never called; you upload inside your submit function instead — see [Composing → Media](#media).)
 
   * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) and to a `fetch` upload body.
-  * kind: a `String` — the flat [kind name](#rules--attachments) of the slot the composer assigned this attachment (`"image"`/`"video"`/`"animation"`/`"audio"`), the same vocabulary as [`assetType()`](#assettype). Branch on it when a service uploads different kinds to different endpoints; ignore it otherwise.
+  * attachedAs: a `String` — the media type the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`): the resolved [kind name](#rules--attachments) after any widening (an animation widened into a `video` slot arrives as `"video"`). This is the app's cast target — what to *produce* — not the file's intrinsic type ([`assetType()`](#assettype) reports that). Branch on it to pick the transform/endpoint.
 
-Fit the bytes to the service, upload them, and return a **`DraftAsset`** carrying the uploaded bytes plus your service ref. Throw an `Error` to report a failure — the app surfaces it and offers a retry.
+Fit the bytes to the service, upload them, and return a **`UploadedAsset`** carrying the uploaded bytes plus your service ref. Throw an `Error` to report a failure — the app surfaces it and offers a retry.
 
 Do **not** apply the user's alt text or focus point here: they stay editable after this runs, so capturing them now would use stale values. They ride each attachment and are applied at submit ([Composing → Media](#media)).
 
 ```javascript
-async function uploadAttachment(file, kind) {
+async function uploadAttachment(file, attachedAs) {
     const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 8_000_000, maxPixels: 4096 });
     const res = await fetch.post(`${site}/api/v2/media`, { multipart: [{ name: "file", file: fitted }] }).json();
-    return DraftAsset.create(fitted, { id: res.id });   // bytes + the ref you reference at submit
+    return UploadedAsset.create(fitted, { id: res.id });   // bytes + the ref you reference at submit
 }
 ```
 
-**`DraftAsset.create(file, metadata)`** builds the return value: `file` is the uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
+**`UploadedAsset.create(file, metadata)`** builds the return value: `file` is the uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1259,7 +1297,7 @@ Fits a [`FileAsset`](#fileasset) to an **animation** slot — *silent* motion, t
   * formats: **required** — `"mp4"`, `"mov"`, or `"gif"`: a silent movie for the first two, a genuine animated GIF for `"gif"`. An empty array **throws**.
   * options: `{ maxPixels, maxBytes, maxFrameRate }`, as [`videoTransform`](#videotransform). `maxFrameRate` applies only when the output is a **movie** (`mp4`/`mov`) — a GIF's timing is per-frame delays, not a constant rate, so it's left untouched.
 
-Because it always strips audio, this is the way to "narrow" a video into a soundless clip that a service accepts as an animation (some, like Bluesky, treat an animation and a video as the same slot but this is useful for Mastodon where the distinction matters).
+Because it always strips audio, this is the way to "narrow" a video into a soundless clip that a service accepts as an animation — useful for any service that treats a silent animation as a distinct kind from a video (some services, instead, accept either in a single slot and don't need the distinction).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1290,7 +1328,7 @@ Read-only facts a [`FileAsset`](#fileasset) doesn't carry. Each reads image prop
 const fitted = await imageTransform(picked, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
 const { width, height } = await imageInfo(fitted);
 const blob = (await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json()).blob;
-images.push({ image: blob, alt: attachment.altText ?? "", aspectRatio: { width, height } });
+images.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width, height } });
 ```
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
