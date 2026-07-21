@@ -986,8 +986,8 @@ async function suggest(match) {
 }
 ```
 
-  * **display** — the primary text shown for the row (e.g. `@alice`). Required.
-  * **insertText** — the text that replaces the typed token when the row is picked. Required. The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`). Must be **unique** across the rows you return — two rows that insert the same text are meaningless, and the composer drops any duplicate (keeping the first).
+  * **insertText** — the text that replaces the typed token when the row is picked, and the row's identity. **Required — it's the only field you must return.** The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`). Must be **unique** across the rows you return — two rows that insert the same text are meaningless, and the composer drops any duplicate (keeping the first).
+  * **display** — the primary text shown for the row (e.g. `@alice`). Optional: omit it and the composer shows the `insertText` in its place. Set it when the shown text should differ from what's typed (show a name, insert a handle).
   * **detail** — an optional secondary line (a display name, a post count).
   * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
 
