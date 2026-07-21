@@ -978,8 +978,8 @@ async function suggest(match) {
     if (query.length === 0) { return []; }
     const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
     return accounts.map(account => ({
-        display: "@" + account.acct,       // primary line (required)
-        insertText: "@" + account.acct,    // replaces the typed token (required)
+        insertText: "@" + account.acct,    // required — the text inserted, and the row's identity
+        display: "@" + account.acct,       // optional — omit to show insertText; set it when display should differ
         detail: account.display_name,      // optional secondary line
         avatar: account.avatar             // optional leading image
     }));
