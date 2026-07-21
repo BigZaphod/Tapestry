@@ -914,7 +914,6 @@ async function suggestAccounts(query) {
 	if (query.length === 0) { return []; }
 	const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
 	return (result.actors ?? []).map(actor => ({
-		id: actor.did,
 		display: "@" + actor.handle,
 		detail: actor.displayName,
 		avatar: actor.avatar,

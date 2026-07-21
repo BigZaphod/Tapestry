@@ -467,7 +467,6 @@ async function suggestAccounts(query) {
 	if (query.length === 0) { return []; }
 	const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
 	return accounts.map(account => ({
-		id: account.id,
 		display: "@" + account.acct,
 		detail: account.display_name || account.username,
 		avatar: account.avatar,

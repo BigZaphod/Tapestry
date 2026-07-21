@@ -981,17 +981,15 @@ async function suggest(match) {
         display: "@" + account.acct,       // primary line (required)
         insertText: "@" + account.acct,    // replaces the typed token (required)
         detail: account.display_name,      // optional secondary line
-        avatar: account.avatar,            // optional leading image
-        id: account.id                     // optional stable identifier
+        avatar: account.avatar             // optional leading image
     }));
 }
 ```
 
   * **display** — the primary text shown for the row (e.g. `@alice`). Required.
-  * **insertText** — the text that replaces the typed token when the row is picked. Required. The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`).
+  * **insertText** — the text that replaces the typed token when the row is picked. Required. The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`). Must be **unique** across the rows you return — two rows that insert the same text are meaningless, and the composer drops any duplicate (keeping the first).
   * **detail** — an optional secondary line (a display name, a post count).
   * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
-  * **id** — an optional stable identifier for the selected suggestion (an account id), carried for later use.
 
 `suggest()` is **best-effort** and fired on every keystroke, so it should return quickly. It does **not** need to guard its own errors: a thrown failure is logged by the host and simply shows no rows — it never interrupts composing. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
 
