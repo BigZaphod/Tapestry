@@ -781,8 +781,10 @@ draft.rules.shortcodes = [
   * **url** — the emoji image, shown in the autocomplete menu (and matching what the service renders `:shortcode:` to). Required; an entry with no valid URL is dropped.
   * **category** — an optional grouping label.
 
-Omitting `shortcodes` (or leaving it empty) leaves the `:` trigger **inactive** — appropriate for a service that has
-no custom emoji (e.g. one using plain Unicode emoji only). This is the compose-side counterpart to an item's
+Omitting `shortcodes` (or leaving it empty) leaves this **built-in emoji autocomplete** inactive — appropriate for a
+service that has no custom emoji (e.g. one using plain Unicode emoji only). (It doesn't necessarily silence `:`
+altogether: a connector can still route `:` to `suggest()` by declaring it in [`suggestions`](#rules--suggestion-markers)
+— see there for how the two interact.) This is the compose-side counterpart to an item's
 [`shortcodes`](#shortcodes-dictionary) map, which renders custom emoji in *received* content; both typically come from
 the same source.
 
