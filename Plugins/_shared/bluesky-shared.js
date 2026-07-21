@@ -364,8 +364,8 @@ function attachmentsForEmbed(embed, did = null) {
     let attachments = null;
     
     if (embed != null) {
-        if (embed.$type.startsWith("app.bsky.embed.images")) {
-            const images = embed.images;
+        if (embed.$type.startsWith("app.bsky.embed.images") || embed.$type.startsWith("app.bsky.embed.gallery")) {
+            const images = embed.images ?? embed.items;   // `images` embed (<=4) and `gallery` (5-20) share the item shape
             if (images != null) {
                 attachments = []
                 let count = images.length;
@@ -399,8 +399,9 @@ function attachmentsForEmbed(embed, did = null) {
                             }
                         }
                         else {
-                            if (image.thumb) {
-                                attachment.thumbnail = image.thumb;
+                            const thumb = image.thumb ?? image.thumbnail;   // images view uses `thumb`; gallery view uses `thumbnail`
+                            if (thumb) {
+                                attachment.thumbnail = thumb;
                             }
                         }
                         attachment.mimeType = "image";
@@ -739,19 +740,24 @@ async function uploadAttachment(file, attachedAs) {
 	throw new Error(`Uploading ${attachedAs} isn't supported yet`);
 }
 
-// Build an `app.bsky.embed.images` from the draft's image attachments: use each attachment's blob ref if it was
-// pre-uploaded, else upload its bytes here. Alt text comes from the final draft and is written on the record.
-// Bluesky has no focal point.
+// Build the image embed from the draft's image attachments: use each attachment's blob ref if it was pre-uploaded,
+// else upload its bytes here. Alt text comes from the final draft and is written on the record. Bluesky has no focal
+// point. The item shape is identical for both embeds — up to 4 images uses the classic `app.bsky.embed.images` (widely
+// rendered), and 5+ uses `app.bsky.embed.gallery` (soft limit 10), which is the only embed that holds more than four.
 async function buildImagesEmbed(attachments) {
-	const images = [];
+	const items = [];
 	for (const attachment of attachments) {
 		const meta = attachment.metadata;
 		const { blob, width, height } = meta != null
 			? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
 			: await uploadImage(attachment.file);
-		images.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width: width, height: height } });
+		items.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width: width, height: height } });
 	}
-	return { "$type": "app.bsky.embed.images", images: images };
+	// gallery `items` is a UNION (of `#image`), so each member needs a `$type` discriminator; the `images`
+	// embed's plain-ref array doesn't. The per-item blob/alt/aspectRatio is identical either way.
+	return items.length > 4
+		? { "$type": "app.bsky.embed.gallery", items: items.map(i => ({ "$type": "app.bsky.embed.gallery#image", ...i })) }
+		: { "$type": "app.bsky.embed.images", images: items };
 }
 
 // Build an `app.bsky.embed.video` from the draft's single video attachment: use the blob ref if it was pre-uploaded,
@@ -792,7 +798,7 @@ function composeDraft(actionId, target, metadata) {
 		// that can coexist. Bluesky has no animated-image type, so a picked animation is offered as a video.
 		attachments: {
 			slots: {
-				media: [ { allow: ["link"] }, { allow: ["image"], max: 4 }, { allow: ["video"] } ],
+				media: [ { allow: ["link"] }, { allow: ["image"], max: 10 }, { allow: ["video"] } ],   // up to 4 = images embed, 5–10 = gallery (soft limit 10)
 				quote: [ { allow: ["item"] } ]
 			},
 			combinations: [ ["media", "quote"] ]
@@ -1112,14 +1118,16 @@ async function performAction(actionId, target, actionValue) {
 		const rkey = draft.metadata.rkey;
 			// Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
 			// do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
-			// rkey is known ahead, so the gates can reference the post URI in the same batch. This is what the official
-			// Bluesky client does; `validate: true` matches it too.
+			// rkey is known ahead, so the gates can reference the post URI in the same batch. We deliberately DON'T pass
+			// `validate: true`: with atproto's default optimistic validation, a self-hosted/older PDS that doesn't know
+			// a lexicon (a threadgate, or a gallery embed) stores the record fail-open instead of rejecting it — the
+			// AppView is the authority on render. Forcing validation would break exactly those arbitrary-PDS setups.
 			const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
 			const writes = [
 				{ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
 				...gateWrites(attributes, postUri, rkey, createdAt, draft.metadata.parentUri != null),
 			];
-			await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, validate: true, writes: writes } });
+			await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);

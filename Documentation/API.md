@@ -705,10 +705,10 @@ draft.rules.attachments = {
 Two worked examples:
 
 ```js
-// Bluesky — one embed (≤4 images, OR one video, OR one link card), and a post may ALSO quote another
+// Bluesky — one embed (up to 10 images, OR one video, OR one link card), and a post may ALSO quote another
 // (recordWithMedia), so quote + one media coexist:
 attachments: {
-  slots: { media: [ {allow:["image"], max:4}, {allow:["video"]}, {allow:["link"]} ],
+  slots: { media: [ {allow:["image"], max:10}, {allow:["video"]}, {allow:["link"]} ],
            quote: [ {allow:["item"]} ] },
   combinations: [ ["media", "quote"] ]
 }
