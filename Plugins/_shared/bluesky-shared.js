@@ -868,19 +868,11 @@ function composeAttributes(isReply) {
 	return attributes;
 }
 
-// Reply/quote controls are written as sidecar records sharing the post's rkey (Bluesky has no atomic multi-write).
-// Best-effort: the post already exists, so a gate failure is logged rather than fatal — surfacing partial failure to
-// the user is a later refinement.
-async function writeGates(attributes, did, postUri, rkey, createdAt, isReply) {
-	const createGate = async (collection, record) => {
-		try {
-			const gateBody = { collection: collection, repo: did, rkey: rkey, record: record };
-			await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: gateBody });
-		} catch (error) {
-			console.log(`${collection} failed (the post is still up): ${error}`);
-		}
-	};
-
+// Build the threadgate/postgate create-ops that ride in the post's atomic `applyWrites` batch (see `send`), sharing
+// the post's rkey (a gate gates the `feed.post` at the same rkey). Returns [] when no gate applies — because the
+// whole batch is atomic, there is no separate write to fail and nothing partial to surface.
+function gateWrites(attributes, postUri, rkey, createdAt, isReply) {
+	const writes = [];
 	// Threadgate — only on a top-level post (a threadgate's rkey must equal the thread root's, so a reply can't carry
 	// one) and only when replies aren't open to everyone. An empty allow list means "nobody", which is exactly what
 	// the "nobody" selection (and any selection lacking a relationship rule) produces.
@@ -890,13 +882,16 @@ async function writeGates(attributes, did, postUri, rkey, createdAt, isReply) {
 		if (audience.has("following")) { allow.push({ "$type": "app.bsky.feed.threadgate#followingRule" }); }
 		if (audience.has("followers")) { allow.push({ "$type": "app.bsky.feed.threadgate#followerRule" }); }
 		if (audience.has("mentioned")) { allow.push({ "$type": "app.bsky.feed.threadgate#mentionRule" }); }
-		await createGate("app.bsky.feed.threadgate", { "$type": "app.bsky.feed.threadgate", post: postUri, allow: allow, createdAt: createdAt });
+		writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.threadgate", rkey: rkey,
+			value: { "$type": "app.bsky.feed.threadgate", post: postUri, allow: allow, createdAt: createdAt } });
 	}
 
 	// Postgate — only when quotes are disallowed.
 	if (attributes.allowQuotes === "off") {
-		await createGate("app.bsky.feed.postgate", { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] });
+		writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.postgate", rkey: rkey,
+			value: { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] } });
 	}
+	return writes;
 }
 
 // @-mention autocomplete. A bare "@" (no query yet) returns nothing. The inserted "@handle" is resolved to a DID by
@@ -1115,11 +1110,16 @@ async function performAction(actionId, target, actionValue) {
 		const facets = await buildFacets(draft.body);
 		if (facets.length > 0) { record.facets = facets; }
 		const rkey = draft.metadata.rkey;
-		const body = { collection: "app.bsky.feed.post", repo: did, rkey: rkey, record: record };
-		await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body });
-
-		// Reply/quote controls are separate records sharing the post's rkey (Bluesky has no atomic multi-write).
-		await writeGates(attributes, did, `at://${did}/app.bsky.feed.post/${rkey}`, rkey, createdAt, draft.metadata.parentUri != null);
+			// Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
+			// do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
+			// rkey is known ahead, so the gates can reference the post URI in the same batch. This is what the official
+			// Bluesky client does; `validate: true` matches it too.
+			const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
+			const writes = [
+				{ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
+				...gateWrites(attributes, postUri, rkey, createdAt, draft.metadata.parentUri != null),
+			];
+			await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, validate: true, writes: writes } });
 	}
 	else {
 		throw new Error(`actionId "${actionId}" not implemented`);
