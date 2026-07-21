@@ -7,56 +7,56 @@ const uriPrefixVideo = "https://video.bsky.app";
 const videoServiceDid = "did:web:video.bsky.app";
 
 async function getSessionDid() {
-	const jsonObject = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
-	const did = jsonObject.did;
-	return did;
+    const jsonObject = await fetch(site + "/xrpc/com.atproto.server.getSession").json();
+    const did = jsonObject.did;
+    return did;
 }
 
 async function getAccountDid(account) {
-	const jsonObject = await fetch(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`).json();
-	const did = jsonObject.did;
-	return did;
+    const jsonObject = await fetch(`${site}/xrpc/app.bsky.actor.getProfile?actor=${account}`).json();
+    const did = jsonObject.did;
+    return did;
 }
 
 async function getFeedInfo(did, feedId) {
-	const jsonObject = await fetch(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json();
-	const feedName = jsonObject.view.displayName;
-	const avatar = jsonObject.view.avatar;
-	return [feedName, avatar];
+    const jsonObject = await fetch(`${site}/xrpc/app.bsky.feed.getFeedGenerator?feed=at://${did}/app.bsky.feed.generator/${feedId}`).json();
+    const feedName = jsonObject.view.displayName;
+    const avatar = jsonObject.view.avatar;
+    return [feedName, avatar];
 }
 
 function normalizeAccount(account) {
-	let result = account.trim();
-	if (result.length > 1 && result.startsWith("@")) {
-		result = result.slice(1);
-	}
-	return result;
+    let result = account.trim();
+    if (result.length > 1 && result.startsWith("@")) {
+        result = result.slice(1);
+    }
+    return result;
 }
 
 // Bluesky handles are domains, so we can only shorten the default "*.bsky.social" ones by dropping that
 // suffix. Custom-domain handles (e.g. "sean.foo") are left whole. Used for feed names; the full handle is
 // kept elsewhere (e.g. accountIdentity) when disambiguation still matters.
 function shortHandle(handle) {
-	return handle.replace(/\.bsky\.social$/, "");
+    return handle.replace(/\.bsky\.social$/, "");
 }
 
 function parentsForItem(item, includeActions) {
-	let results = [];
-	if (item.parent != null) {
-		parentPostForItem(item.parent, includeActions, results);
-	}
-	return results;
+    let results = [];
+    if (item.parent != null) {
+        parentPostForItem(item.parent, includeActions, results);
+    }
+    return results;
 }
 
 function parentPostForItem(item, includeActions, results) {
-	if (item.parent != null) {
-		parentPostForItem(item.parent, includeActions, results);
-	}
+    if (item.parent != null) {
+        parentPostForItem(item.parent, includeActions, results);
+    }
 
-	const post = postForItem(item, includeActions);
-	if (post != null) {
-		results.push(post);
-	}
+    const post = postForItem(item, includeActions);
+    if (post != null) {
+        results.push(post);
+    }
 }
 
 function postForItem(item, includeActions = false, dateOverride = null, allowRepliesFromOthers = true) {
@@ -71,12 +71,12 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     const record = item.post.record;
     
     if (item.reply != null) {
-    	if (! allowRepliesFromOthers) {
-			if (item.reply.parent?.author?.viewer.following == null) {
-				return null;
-			}
-		}
-	}
+        if (! allowRepliesFromOthers) {
+            if (item.reply.parent?.author?.viewer.following == null) {
+                return null;
+            }
+        }
+    }
             
     let content = contentForRecord(item.post.record);
         
@@ -137,13 +137,13 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     let replyContent = null;
     if (item.reply != null) {
         annotation = annotationForReply(item);
-		if (item.post.author.handle != item.reply.parent?.author?.handle) {					
-			replyContent = contentForReply(item.reply);
-			if (replyContent != null) {
-				content = replyContent + content;
-			}
-		}
-	}
+        if (item.post.author.handle != item.reply.parent?.author?.handle) {					
+            replyContent = contentForReply(item.reply);
+            if (replyContent != null) {
+                content = replyContent + content;
+            }
+        }
+    }
 	
     const repostContent = contentForRepost(item.reason);
     if (repostContent != null) {
@@ -266,10 +266,10 @@ function nameForAccount(account) {
         return null;
     }
 
-	const did = getItem("didSelf");
-	if (did != null && did == account.did) {
-		return "you";
-	}
+    const did = getItem("didSelf");
+    if (did != null && did == account.did) {
+        return "you";
+    }
 	
     if (account.displayName != null && account.displayName.length > 0) {
         return account.displayName;
@@ -325,18 +325,18 @@ function annotationForReply(item) {
     let annotation = null;
 
     if (item.reply != null && item.reply.parent != null) {
-    	if (item.post.author.handle == item.reply.parent.author?.handle) {
-			const text = "Replying to self";
-			annotation = Annotation.createWithText(text);
-			annotation.uri = uriForAccount(item.post.author);
-    	}
-    	else {
-			let name = nameForAccount(item.reply.parent.author);
-			if (name != null) {
-				const text = `In reply to ${name}`;
-				annotation = Annotation.createWithText(text);
-				annotation.uri = uriForAccount(item.reply.parent.author);
-			}
+        if (item.post.author.handle == item.reply.parent.author?.handle) {
+            const text = "Replying to self";
+            annotation = Annotation.createWithText(text);
+            annotation.uri = uriForAccount(item.post.author);
+        }
+        else {
+            let name = nameForAccount(item.reply.parent.author);
+            if (name != null) {
+                const text = `In reply to ${name}`;
+                annotation = Annotation.createWithText(text);
+                annotation.uri = uriForAccount(item.reply.parent.author);
+            }
         }
     }
     
@@ -585,82 +585,82 @@ const _s32 = "234567abcdefghijklmnopqrstuvwxyz";
 let _tidLast = 0n;
 const _tidClock = BigInt(Math.floor(Math.random() * 1024));
 function nextTid() {
-	let micros = BigInt(Date.now()) * 1000n;
-	if (micros <= _tidLast) { micros = _tidLast + 1n; }
-	_tidLast = micros;
-	let n = (micros << 10n) | _tidClock;
-	let s = "";
-	for (let i = 0; i < 13; i++) { s = _s32[Number(n & 31n)] + s; n >>= 5n; }
-	return s;
+    let micros = BigInt(Date.now()) * 1000n;
+    if (micros <= _tidLast) { micros = _tidLast + 1n; }
+    _tidLast = micros;
+    let n = (micros << 10n) | _tidClock;
+    let s = "";
+    for (let i = 0; i < 13; i++) { s = _s32[Number(n & 31n)] + s; n >>= 5n; }
+    return s;
 }
 
 // Resolve a handle (e.g. "alice.bsky.social") to its DID, or null if it can't be resolved.
 async function resolveHandle(handle) {
-	try {
-		return (await fetch(`${site}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`).json()).did;
-	} catch (error) {
-		return null;
-	}
+    try {
+        return (await fetch(`${site}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(handle)}`).json()).did;
+    } catch (error) {
+        return null;
+    }
 }
 
 // Build richtext facets for the @mentions and links in `text`. Offsets are UTF-8 BYTE positions (byteEnd
 // exclusive), computed over the exact string sent as record.text. A mention that can't be resolved to a DID is
 // left as plain text rather than blocking the post.
 async function buildFacets(text) {
-	const encoder = new TextEncoder();
-	const byteLength = (s) => encoder.encode(s).length;
-	const facets = [];
+    const encoder = new TextEncoder();
+    const byteLength = (s) => encoder.encode(s).length;
+    const facets = [];
 
-	// Mentions: @handle. atproto handles are a-z 0-9 . - (no underscore); a trailing dot isn't part of the handle.
-	for (const match of text.matchAll(/(^|\s|\()@([a-zA-Z0-9.-]+)/g)) {
-		const handle = match[2].replace(/\.+$/, "");
-		if (handle.length === 0) { continue; }
-		const did = await resolveHandle(handle);
-		if (did == null) { continue; }
-		const start = byteLength(text.slice(0, match.index + match[1].length));
-		const end = start + byteLength("@" + handle);
-		facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#mention", did: did }] });
-	}
+    // Mentions: @handle. atproto handles are a-z 0-9 . - (no underscore); a trailing dot isn't part of the handle.
+    for (const match of text.matchAll(/(^|\s|\()@([a-zA-Z0-9.-]+)/g)) {
+        const handle = match[2].replace(/\.+$/, "");
+        if (handle.length === 0) { continue; }
+        const did = await resolveHandle(handle);
+        if (did == null) { continue; }
+        const start = byteLength(text.slice(0, match.index + match[1].length));
+        const end = start + byteLength("@" + handle);
+        facets.push({ index: { byteStart: start, byteEnd: end }, features: [{ "$type": "app.bsky.richtext.facet#mention", did: did }] });
+    }
 
-	// Links via `extractLinks` (bare domains included, non-web schemes filtered). `start`/`length` are UTF-16 offsets
-	// into `text`; convert to the UTF-8 byte offsets facets use.
-	for (const link of extractLinks(text)) {
-		const byteStart = byteLength(text.slice(0, link.start));
-		const byteEnd = byteStart + byteLength(text.substring(link.start, link.start + link.length));
-		facets.push({ index: { byteStart: byteStart, byteEnd: byteEnd }, features: [{ "$type": "app.bsky.richtext.facet#link", uri: link.url }] });
-	}
+    // Links via `extractLinks` (bare domains included, non-web schemes filtered). `start`/`length` are UTF-16 offsets
+    // into `text`; convert to the UTF-8 byte offsets facets use.
+    for (const link of extractLinks(text)) {
+        const byteStart = byteLength(text.slice(0, link.start));
+        const byteEnd = byteStart + byteLength(text.substring(link.start, link.start + link.length));
+        facets.push({ index: { byteStart: byteStart, byteEnd: byteEnd }, features: [{ "$type": "app.bsky.richtext.facet#link", uri: link.url }] });
+    }
 
-	return facets;
+    return facets;
 }
 
 // Build an `app.bsky.embed.external` (link card) from a resolved link attachment: fetch the link's image, fit it
 // under Bluesky's external-thumb ceiling (1 MB / 2000 px — matches the lexicon's thumb `maxSize` and the official
 // client), and upload it as a blob. A failure degrades to a card without a thumbnail rather than blocking the post.
 async function buildExternalEmbed(link) {
-	const external = { uri: link.url, title: link.title ?? link.url, description: link.subtitle ?? "" };
+    const external = { uri: link.url, title: link.title ?? link.url, description: link.subtitle ?? "" };
 
-	if (link.image != null) {
-		try {
-			const original = await fetch(link.image).file();
-			const thumb = await imageTransform(original, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
-			const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: thumb }).json();
-			if (uploaded.blob != null) { external.thumb = uploaded.blob; }
-		} catch (error) {
-			console.log(`link card thumbnail failed: ${error}`);   // post the card without a thumbnail
-		}
-	}
+    if (link.image != null) {
+        try {
+            const original = await fetch(link.image).file();
+            const thumb = await imageTransform(original, ["jpeg"], { maxBytes: 1000000, maxPixels: 2000 });
+            const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: thumb }).json();
+            if (uploaded.blob != null) { external.thumb = uploaded.blob; }
+        } catch (error) {
+            console.log(`link card thumbnail failed: ${error}`);   // post the card without a thumbnail
+        }
+    }
 
-	return { "$type": "app.bsky.embed.external", external: external };
+    return { "$type": "app.bsky.embed.external", external: external };
 }
 
 // Fit + upload one image to a blob, returning the ref plus its display dimensions — Bluesky positions each embedded
 // image by `aspectRatio`, so read the fitted size with `imageInfo`. Fitted under the per-image blob ceiling (2 MB).
 // `uploadBlob` is synchronous — the ref comes back immediately (no async transcode poll like a video).
 async function uploadImage(file) {
-	const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 2000000, maxPixels: 4000 });
-	const info = await imageInfo(fitted);
-	const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json();
-	return { blob: uploaded.blob, width: info.width, height: info.height, file: fitted };
+    const fitted = await imageTransform(file, ["jpeg", "png"], { maxBytes: 2000000, maxPixels: 4000 });
+    const info = await imageInfo(fitted);
+    const uploaded = await fetch.post(`${site}/xrpc/com.atproto.repo.uploadBlob`, { body: fitted }).json();
+    return { blob: uploaded.blob, width: info.width, height: info.height, file: fitted };
 }
 
 // The account's DID plus its PDS's `did:web:` identifier (the audience a service-auth token is scoped to). Both are
@@ -669,18 +669,18 @@ async function uploadImage(file) {
 // entryway while the repo actually lives on a `*.host.bsky.network` server, and a service token's audience must be
 // the PDS that ultimately stores the blob.
 async function accountDids() {
-	let did = getItem("did");
-	let pdsAud = getItem("pdsAud");
-	if (did == null || pdsAud == null) {
-		const session = await fetch(`${site}/xrpc/com.atproto.server.getSession`).json();
-		did = session.did;
-		const service = (session.didDoc?.service ?? []).find(entry => entry.type === "AtprotoPersonalDataServer");
-		const host = (service?.serviceEndpoint ?? site).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-		pdsAud = `did:web:${host}`;
-		setItem("did", did);
-		setItem("pdsAud", pdsAud);
-	}
-	return { did, pdsAud };
+    let did = getItem("did");
+    let pdsAud = getItem("pdsAud");
+    if (did == null || pdsAud == null) {
+        const session = await fetch(`${site}/xrpc/com.atproto.server.getSession`).json();
+        did = session.did;
+        const service = (session.didDoc?.service ?? []).find(entry => entry.type === "AtprotoPersonalDataServer");
+        const host = (service?.serviceEndpoint ?? site).replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+        pdsAud = `did:web:${host}`;
+        setItem("did", did);
+        setItem("pdsAud", pdsAud);
+    }
+    return { did, pdsAud };
 }
 
 // Mint a short-lived service-auth JWT: a token the PDS issues authorizing ONE lexicon method (`lxm`) against ONE
@@ -688,10 +688,10 @@ async function accountDids() {
 // the session credential (which never leaves the host) this token is meant to be handed to the connector. The
 // 30-minute expiry mirrors the official client — it must outlive the whole transcode, not just the byte transfer.
 async function serviceAuthToken(aud, lxm) {
-	const exp = Math.floor(Date.now() / 1000) + 30 * 60;
-	const query = `aud=${encodeURIComponent(aud)}&lxm=${encodeURIComponent(lxm)}&exp=${exp}`;
-	const result = await fetch(`${site}/xrpc/com.atproto.server.getServiceAuth?${query}`).json();
-	return result.token;
+    const exp = Math.floor(Date.now() / 1000) + 30 * 60;
+    const query = `aud=${encodeURIComponent(aud)}&lxm=${encodeURIComponent(lxm)}&exp=${exp}`;
+    const result = await fetch(`${site}/xrpc/com.atproto.server.getServiceAuth?${query}`).json();
+    return result.token;
 }
 
 // video.bsky.app gates video per-account: `canUpload` folds in both the daily quota AND eligibility (an account whose
@@ -700,9 +700,9 @@ async function serviceAuthToken(aud, lxm) {
 // transcode, so the refusal lands immediately at pick time rather than after a long upload. Deliberately uncached:
 // the quota is dynamic, so a stale "yes"/"no" would lie.
 async function ensureCanUploadVideo() {
-	const token = await serviceAuthToken(videoServiceDid, "app.bsky.video.getUploadLimits");
-	const limits = await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getUploadLimits`, { headers: { "Authorization": `Bearer ${token}` } }).json();
-	if (!limits.canUpload) { throw new Error(limits.message ?? limits.error ?? "This account can’t upload video right now."); }
+    const token = await serviceAuthToken(videoServiceDid, "app.bsky.video.getUploadLimits");
+    const limits = await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getUploadLimits`, { headers: { "Authorization": `Bearer ${token}` } }).json();
+    if (!limits.canUpload) { throw new Error(limits.message ?? limits.error ?? "This account can’t upload video right now."); }
 }
 
 // Fit + upload one video, returning the processed blob ref plus its display dimensions. A video goes through
@@ -711,33 +711,33 @@ async function ensureCanUploadVideo() {
 // cross-host request), then poll getJobStatus until the transcode finishes and returns the stored blob. getJobStatus
 // is unauthenticated.
 async function uploadVideo(file) {
-	const { did, pdsAud } = await accountDids();
-	await ensureCanUploadVideo();
-	const fitted = await videoTransform(file, ["mp4"], { maxBytes: 300000000 });
-	const token = await serviceAuthToken(pdsAud, "com.atproto.repo.uploadBlob");
-	const name = `${nextTid()}.mp4`;
-	const started = await fetch.post(`${uriPrefixVideo}/xrpc/app.bsky.video.uploadVideo?did=${encodeURIComponent(did)}&name=${name}`,
-		{ body: fitted, headers: { "Authorization": `Bearer ${token}`, "Content-Type": "video/mp4" } }).json();
-	if (started.jobId == null) { throw new Error(started.message ?? started.error ?? "video upload did not start"); }
-	await sleep(1000);   // transcoding is never instant, so skip poll's immediate first check — it's a guaranteed miss
-	const finished = await poll(async () => {
-		const status = (await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getJobStatus?jobId=${encodeURIComponent(started.jobId)}`).json()).jobStatus;
-		if (status.state === "JOB_STATE_FAILED") { throw new Error(status.error ?? "video processing failed"); }
-		return status.state === "JOB_STATE_COMPLETED" ? status : null;
-	});
-	const info = await videoInfo(fitted);
-	return { blob: finished.blob, width: info.width, height: info.height, file: fitted };
+    const { did, pdsAud } = await accountDids();
+    await ensureCanUploadVideo();
+    const fitted = await videoTransform(file, ["mp4"], { maxBytes: 300000000 });
+    const token = await serviceAuthToken(pdsAud, "com.atproto.repo.uploadBlob");
+    const name = `${nextTid()}.mp4`;
+    const started = await fetch.post(`${uriPrefixVideo}/xrpc/app.bsky.video.uploadVideo?did=${encodeURIComponent(did)}&name=${name}`,
+        { body: fitted, headers: { "Authorization": `Bearer ${token}`, "Content-Type": "video/mp4" } }).json();
+    if (started.jobId == null) { throw new Error(started.message ?? started.error ?? "video upload did not start"); }
+    await sleep(1000);   // transcoding is never instant, so skip poll's immediate first check — it's a guaranteed miss
+    const finished = await poll(async () => {
+        const status = (await fetch(`${uriPrefixVideo}/xrpc/app.bsky.video.getJobStatus?jobId=${encodeURIComponent(started.jobId)}`).json()).jobStatus;
+        if (status.state === "JOB_STATE_FAILED") { throw new Error(status.error ?? "video processing failed"); }
+        return status.state === "JOB_STATE_COMPLETED" ? status : null;
+    });
+    const info = await videoInfo(fitted);
+    return { blob: finished.blob, width: info.width, height: info.height, file: fitted };
 }
 
 // Pre-upload one image or video during compose; return the blob ref (as JSON — a blob ref is structured but draft
 // metadata is string-valued) plus its display dimensions. `attachedAs` is "image" or "video" — an animation widened
 // to video, since Bluesky has no animation kind.
 async function uploadAttachment(file, attachedAs) {
-	if (attachedAs == "image" || attachedAs == "video") {
-		const uploaded = attachedAs == "image" ? await uploadImage(file) : await uploadVideo(file);
-		return UploadedAsset.create(uploaded.file, { blob: JSON.stringify(uploaded.blob), width: `${uploaded.width}`, height: `${uploaded.height}` });
-	}
-	throw new Error(`Uploading ${attachedAs} isn't supported yet`);
+    if (attachedAs == "image" || attachedAs == "video") {
+        const uploaded = attachedAs == "image" ? await uploadImage(file) : await uploadVideo(file);
+        return UploadedAsset.create(uploaded.file, { blob: JSON.stringify(uploaded.blob), width: `${uploaded.width}`, height: `${uploaded.height}` });
+    }
+    throw new Error(`Uploading ${attachedAs} isn't supported yet`);
 }
 
 // Build the image embed from the draft's image attachments: use each attachment's blob ref if it was pre-uploaded,
@@ -745,31 +745,31 @@ async function uploadAttachment(file, attachedAs) {
 // point. The item shape is identical for both embeds — up to 4 images uses the classic `app.bsky.embed.images` (widely
 // rendered), and 5+ uses `app.bsky.embed.gallery` (soft limit 10), which is the only embed that holds more than four.
 async function buildImagesEmbed(attachments) {
-	const items = [];
-	for (const attachment of attachments) {
-		const meta = attachment.metadata;
-		const { blob, width, height } = meta != null
-			? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
-			: await uploadImage(attachment.file);
-		items.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width: width, height: height } });
-	}
-	// gallery `items` is a UNION (of `#image`), so each member needs a `$type` discriminator; the `images`
-	// embed's plain-ref array doesn't. The per-item blob/alt/aspectRatio is identical either way.
-	return items.length > 4
-		? { "$type": "app.bsky.embed.gallery", items: items.map(i => ({ "$type": "app.bsky.embed.gallery#image", ...i })) }
-		: { "$type": "app.bsky.embed.images", images: items };
+    const items = [];
+    for (const attachment of attachments) {
+        const meta = attachment.metadata;
+        const { blob, width, height } = meta != null
+            ? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
+            : await uploadImage(attachment.file);
+        items.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width: width, height: height } });
+    }
+    // gallery `items` is a UNION (of `#image`), so each member needs a `$type` discriminator; the `images`
+    // embed's plain-ref array doesn't. The per-item blob/alt/aspectRatio is identical either way.
+    return items.length > 4
+        ? { "$type": "app.bsky.embed.gallery", items: items.map(i => ({ "$type": "app.bsky.embed.gallery#image", ...i })) }
+        : { "$type": "app.bsky.embed.images", images: items };
 }
 
 // Build an `app.bsky.embed.video` from the draft's single video attachment: use the blob ref if it was pre-uploaded,
 // else upload (transcode + poll) its bytes here. Alt text comes from the final draft and is written on the record.
 async function buildVideoEmbed(attachment) {
-	const meta = attachment.metadata;
-	const { blob, width, height } = meta != null
-		? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
-		: await uploadVideo(attachment.file);
-	const embed = { "$type": "app.bsky.embed.video", video: blob, aspectRatio: { width: width, height: height } };
-	if (attachment.text) { embed.alt = attachment.text; }
-	return embed;
+    const meta = attachment.metadata;
+    const { blob, width, height } = meta != null
+        ? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
+        : await uploadVideo(attachment.file);
+    const embed = { "$type": "app.bsky.embed.video", video: blob, aspectRatio: { width: width, height: height } };
+    if (attachment.text) { embed.alt = attachment.text; }
+    return embed;
 }
 
 // Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
@@ -777,61 +777,61 @@ async function buildVideoEmbed(attachment) {
 // @-mention the user types becomes a facet at send. `newPost` starts blank. Both carry a client-chosen `rkey` for
 // idempotency and submit through the same `send` verb.
 function composeDraft(actionId, target, metadata) {
-	const draft = Draft.create();
-	draft.metadata = { rkey: nextTid() };
-	draft.actions.add("send");
+    const draft = Draft.create();
+    draft.metadata = { rkey: nextTid() };
+    draft.actions.add("send");
 
-	// Bluesky posts are limited to BOTH 300 graphemes and 3000 UTF-8 bytes (the `app.bsky.feed.post` lexicon caps
-	// text at maxGraphemes:300 / maxLength:3000). The byte cap can bind first on emoji-heavy text. No weighting:
-	// URLs and mentions count as their literal typed length — we post the text verbatim, matching what the server
-	// counts (unlike the official app, which shortens URLs in its own counter and so disagrees with the server).
-	draft.rules = {
-		characterUnit: "graphemes",
-		characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
-		fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
-		attributes: composeAttributes(actionId == "reply"),
-		// @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so
-		// `#` isn't offered.
-		suggestions: ["@"],
-		// A post carries ONE embed — a link card, an image set, or a video (mutually exclusive) — and may ALSO quote
-		// another post (recordWithMedia combines a quote with one of those). So `media` and `quote` are separate slots
-		// that can coexist. Bluesky has no animated-image type, so a picked animation is offered as a video.
-		attachments: {
-			slots: {
-				media: [ { allow: ["link"] }, { allow: ["image"], max: 10 }, { allow: ["video"] } ],   // up to 4 = images embed, 5–10 = gallery (soft limit 10)
-				quote: [ { allow: ["item"] } ]
-			},
-			combinations: [ ["media", "quote"] ]
-		},
-		// Bluesky has no focal point (it positions with aspectRatio alone); alt text is per-image/video and lives on
-		// the post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is
-		// race-free. Video is capped at 3 minutes (the official client's constant — Bluesky exposes no limits API, only
-		// a per-account daily quota); the 300 MB size cap is fitted by `uploadVideo`'s transform rather than declined.
-		media: { upload: "eager", supportsAltText: ["image", "video"], supportsFocusPoint: [], limits: { video: { seconds: 180 } } }
-	};
+    // Bluesky posts are limited to BOTH 300 graphemes and 3000 UTF-8 bytes (the `app.bsky.feed.post` lexicon caps
+    // text at maxGraphemes:300 / maxLength:3000). The byte cap can bind first on emoji-heavy text. No weighting:
+    // URLs and mentions count as their literal typed length — we post the text verbatim, matching what the server
+    // counts (unlike the official app, which shortens URLs in its own counter and so disagrees with the server).
+    draft.rules = {
+        characterUnit: "graphemes",
+        characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
+        fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
+        attributes: composeAttributes(actionId == "reply"),
+        // @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so
+        // `#` isn't offered.
+        suggestions: ["@"],
+        // A post carries ONE embed — a link card, an image set, or a video (mutually exclusive) — and may ALSO quote
+        // another post (recordWithMedia combines a quote with one of those). So `media` and `quote` are separate slots
+        // that can coexist. Bluesky has no animated-image type, so a picked animation is offered as a video.
+        attachments: {
+            slots: {
+                media: [ { allow: ["link"] }, { allow: ["image"], max: 10 }, { allow: ["video"] } ],   // up to 4 = images embed, 5–10 = gallery (soft limit 10)
+                quote: [ { allow: ["item"] } ]
+            },
+            combinations: [ ["media", "quote"] ]
+        },
+        // Bluesky has no focal point (it positions with aspectRatio alone); alt text is per-image/video and lives on
+        // the post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is
+        // race-free. Video is capped at 3 minutes (the official client's constant — Bluesky exposes no limits API, only
+        // a per-account daily quota); the 300 MB size cap is fitted by `uploadVideo`'s transform rather than declined.
+        media: { upload: "eager", supportsAltText: ["image", "video"], supportsFocusPoint: [], limits: { video: { seconds: 180 } } }
+    };
 
-	if (actionId == "reply") {
-		const author = target.author;
-		draft.header = "Reply to " + (author?.name ?? author?.username ?? "post");
-		draft.context = [target];
-		draft.metadata.parentUri = metadata.uri;
-		draft.metadata.parentCid = metadata.cid;
-		draft.metadata.rootUri = metadata.rootUri ?? metadata.uri;
-		draft.metadata.rootCid = metadata.rootCid ?? metadata.cid;
-		if (metadata.language != null) { draft.attributeValues.language = metadata.language; }
-	} else if (actionId == "quote") {
-		// A quote is a top-level post embedding another. The full item rides `attachments` for the composer preview
-		// (and to keep it live); the strong ref used to build the embed at send rides `metadata`, like a reply ref.
-		const author = target.author;
-		draft.header = "Quote " + (author?.name ?? author?.username ?? "post");
-		draft.attachments = [target];
-		draft.metadata.quoteUri = metadata.uri;
-		draft.metadata.quoteCid = metadata.cid;
-	} else {
-		draft.header = "New Post";
-	}
+    if (actionId == "reply") {
+        const author = target.author;
+        draft.header = "Reply to " + (author?.name ?? author?.username ?? "post");
+        draft.context = [target];
+        draft.metadata.parentUri = metadata.uri;
+        draft.metadata.parentCid = metadata.cid;
+        draft.metadata.rootUri = metadata.rootUri ?? metadata.uri;
+        draft.metadata.rootCid = metadata.rootCid ?? metadata.cid;
+        if (metadata.language != null) { draft.attributeValues.language = metadata.language; }
+    } else if (actionId == "quote") {
+        // A quote is a top-level post embedding another. The full item rides `attachments` for the composer preview
+        // (and to keep it live); the strong ref used to build the embed at send rides `metadata`, like a reply ref.
+        const author = target.author;
+        draft.header = "Quote " + (author?.name ?? author?.username ?? "post");
+        draft.attachments = [target];
+        draft.metadata.quoteUri = metadata.uri;
+        draft.metadata.quoteCid = metadata.cid;
+    } else {
+        draft.header = "New Post";
+    }
 
-	return draft;
+    return draft;
 }
 
 // Bluesky's composer settings: who may reply (threadgate), whether the post can be quoted (postgate), and the post
@@ -842,294 +842,294 @@ function composeDraft(actionId, target, metadata) {
 // A threadgate is structurally root-only in atproto (its rkey must equal the thread root's), so reply audience can't
 // be set on a reply — that attribute is offered only on top-level posts.
 function composeAttributes(isReply) {
-	const attributes = [];
-	if (!isReply) {
-		attributes.push({
-			name: "replyAudience",
-			prompt: "Who can reply",
-			type: "multiple",
-			defaultValue: "everybody",
-			requireSelection: true,
-			icon: "bubble.left.and.bubble.right",
-			description: "Everybody can reply by default. Choose “Nobody”, or combine groups to limit who can reply.",
-			choices: [
-				{ value: "everybody", prompt: "Everybody", exclusive: true },
-				{ value: "nobody", prompt: "Nobody", exclusive: true },
-				{ value: "mentioned", prompt: "Mentioned users" },
-				{ value: "following", prompt: "People you follow" },
-				{ value: "followers", prompt: "Your followers" }
-			]
-		});
-	}
-	attributes.push({
-		name: "allowQuotes",
-		prompt: "Who can quote",
-		defaultValue: "on",
-		choices: [
-			{ value: "on", prompt: "Anyone", icon: "quote.bubble" },
-			{ value: "off", prompt: "Nobody", icon: "nosign" }
-		]
-	});
-	attributes.push({ name: "language", type: "language" });
-	return attributes;
+    const attributes = [];
+    if (!isReply) {
+        attributes.push({
+            name: "replyAudience",
+            prompt: "Who can reply",
+            type: "multiple",
+            defaultValue: "everybody",
+            requireSelection: true,
+            icon: "bubble.left.and.bubble.right",
+            description: "Everybody can reply by default. Choose “Nobody”, or combine groups to limit who can reply.",
+            choices: [
+                { value: "everybody", prompt: "Everybody", exclusive: true },
+                { value: "nobody", prompt: "Nobody", exclusive: true },
+                { value: "mentioned", prompt: "Mentioned users" },
+                { value: "following", prompt: "People you follow" },
+                { value: "followers", prompt: "Your followers" }
+            ]
+        });
+    }
+    attributes.push({
+        name: "allowQuotes",
+        prompt: "Who can quote",
+        defaultValue: "on",
+        choices: [
+            { value: "on", prompt: "Anyone", icon: "quote.bubble" },
+            { value: "off", prompt: "Nobody", icon: "nosign" }
+        ]
+    });
+    attributes.push({ name: "language", type: "language" });
+    return attributes;
 }
 
 // Build the threadgate/postgate create-ops that ride in the post's atomic `applyWrites` batch (see `send`), sharing
 // the post's rkey (a gate gates the `feed.post` at the same rkey). Returns [] when no gate applies — because the
 // whole batch is atomic, there is no separate write to fail and nothing partial to surface.
 function gateWrites(attributes, postUri, rkey, createdAt, isReply) {
-	const writes = [];
-	// Threadgate — only on a top-level post (a threadgate's rkey must equal the thread root's, so a reply can't carry
-	// one) and only when replies aren't open to everyone. An empty allow list means "nobody", which is exactly what
-	// the "nobody" selection (and any selection lacking a relationship rule) produces.
-	const audience = new Set((attributes.replyAudience ?? "everybody").split(","));
-	if (!isReply && !audience.has("everybody")) {
-		const allow = [];
-		if (audience.has("following")) { allow.push({ "$type": "app.bsky.feed.threadgate#followingRule" }); }
-		if (audience.has("followers")) { allow.push({ "$type": "app.bsky.feed.threadgate#followerRule" }); }
-		if (audience.has("mentioned")) { allow.push({ "$type": "app.bsky.feed.threadgate#mentionRule" }); }
-		writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.threadgate", rkey: rkey,
-			value: { "$type": "app.bsky.feed.threadgate", post: postUri, allow: allow, createdAt: createdAt } });
-	}
+    const writes = [];
+    // Threadgate — only on a top-level post (a threadgate's rkey must equal the thread root's, so a reply can't carry
+    // one) and only when replies aren't open to everyone. An empty allow list means "nobody", which is exactly what
+    // the "nobody" selection (and any selection lacking a relationship rule) produces.
+    const audience = new Set((attributes.replyAudience ?? "everybody").split(","));
+    if (!isReply && !audience.has("everybody")) {
+        const allow = [];
+        if (audience.has("following")) { allow.push({ "$type": "app.bsky.feed.threadgate#followingRule" }); }
+        if (audience.has("followers")) { allow.push({ "$type": "app.bsky.feed.threadgate#followerRule" }); }
+        if (audience.has("mentioned")) { allow.push({ "$type": "app.bsky.feed.threadgate#mentionRule" }); }
+        writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.threadgate", rkey: rkey,
+            value: { "$type": "app.bsky.feed.threadgate", post: postUri, allow: allow, createdAt: createdAt } });
+    }
 
-	// Postgate — only when quotes are disallowed.
-	if (attributes.allowQuotes === "off") {
-		writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.postgate", rkey: rkey,
-			value: { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] } });
-	}
-	return writes;
+    // Postgate — only when quotes are disallowed.
+    if (attributes.allowQuotes === "off") {
+        writes.push({ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.postgate", rkey: rkey,
+            value: { "$type": "app.bsky.feed.postgate", post: postUri, createdAt: createdAt, embeddingRules: [{ "$type": "app.bsky.feed.postgate#disableRule" }] } });
+    }
+    return writes;
 }
 
 // @-mention autocomplete. A bare "@" (no query yet) returns nothing. The inserted "@handle" is resolved to a DID by
 // buildFacets at send.
 async function suggest(match) {
-	const marker = match[0];
-	const query = match.slice(1);   // drop the marker; "" for a bare "@"
-	if (marker === "@") { return await suggestAccounts(query); }
-	return [];
+    const marker = match[0];
+    const query = match.slice(1);   // drop the marker; "" for a bare "@"
+    if (marker === "@") { return await suggestAccounts(query); }
+    return [];
 }
 
 // Actor typeahead via app.bsky.actor.searchActorsTypeahead. `handle` is the full domain handle ("alice.bsky.social")
 // — exactly the mention text to insert; displayName may be absent (the composer falls back to the handle).
 async function suggestAccounts(query) {
-	if (query.length === 0) { return []; }
-	const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
-	return (result.actors ?? []).map(actor => ({
-		display: "@" + actor.handle,
-		detail: actor.displayName,
-		avatar: actor.avatar,
-		insertText: "@" + actor.handle
-	}));
+    if (query.length === 0) { return []; }
+    const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
+    return (result.actors ?? []).map(actor => ({
+        display: "@" + actor.handle,
+        detail: actor.displayName,
+        avatar: actor.avatar,
+        insertText: "@" + actor.handle
+    }));
 }
 
 async function performAction(actionId, target, actionValue) {
-	// Post uri/cid/rkey live in item.metadata; older items stored them as a JSON string under the action value — fall
-	// back for those. `target` is null for a feed-targeted action (newPost), so `?.`.
-	let metadata = target?.metadata;
-	if (metadata == null) {
-		const legacy = actionValue;
-		if (legacy != null) {
-			const values = JSON.parse(legacy);
-			metadata = { uri: values.uri, cid: values.cid };
-			// The old unlike/unrepost actions carried the record's rkey directly.
-			if (actionId == "unlike") { metadata.likeRkey = values.rkey; }
-			else if (actionId == "unrepost") { metadata.repostRkey = values.rkey; }
-		}
-	}
+    // Post uri/cid/rkey live in item.metadata; older items stored them as a JSON string under the action value — fall
+    // back for those. `target` is null for a feed-targeted action (newPost), so `?.`.
+    let metadata = target?.metadata;
+    if (metadata == null) {
+        const legacy = actionValue;
+        if (legacy != null) {
+            const values = JSON.parse(legacy);
+            metadata = { uri: values.uri, cid: values.cid };
+            // The old unlike/unrepost actions carried the record's rkey directly.
+            if (actionId == "unlike") { metadata.likeRkey = values.rkey; }
+            else if (actionId == "unrepost") { metadata.repostRkey = values.rkey; }
+        }
+    }
 
-	let did = getItem("did");
-	if (did == null) {
-		did = await getSessionDid();
-		setItem("did", did);
-	}
+    let did = getItem("did");
+    if (did == null) {
+        did = await getSessionDid();
+        setItem("did", did);
+    }
 
-	let date = new Date().toISOString();
-	if (actionId == "like") {
-		const body = {
-			collection: "app.bsky.feed.like",
-			repo: did,
-			record : {
-				"$type": "app.bsky.feed.like",
-				subject: {
-					uri: metadata.uri,
-					cid: metadata.cid
-				},
-				createdAt: date,
-			}
-		};
+    let date = new Date().toISOString();
+    if (actionId == "like") {
+        const body = {
+            collection: "app.bsky.feed.like",
+            repo: did,
+            record : {
+                "$type": "app.bsky.feed.like",
+                subject: {
+                    uri: metadata.uri,
+                    cid: metadata.cid
+                },
+                createdAt: date,
+            }
+        };
 
-		const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
-		const rkey = jsonObject.uri.split("/").pop();
+        const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
+        const rkey = jsonObject.uri.split("/").pop();
 
-		metadata.likeRkey = rkey;
-		target.metadata = metadata;
-		target.actions.delete("like");
-		target.actions.add("unlike");
-		return target;
-	}
-	else if (actionId == "unlike") {
-		const body = {
-			collection: "app.bsky.feed.like",
-			repo: did,
-			rkey: metadata.likeRkey
-		};
+        metadata.likeRkey = rkey;
+        target.metadata = metadata;
+        target.actions.delete("like");
+        target.actions.add("unlike");
+        return target;
+    }
+    else if (actionId == "unlike") {
+        const body = {
+            collection: "app.bsky.feed.like",
+            repo: did,
+            rkey: metadata.likeRkey
+        };
 
-		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
+        await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
 
-		target.actions.delete("unlike");
-		target.actions.add("like");
-		return target;
-	}
-	else if (actionId == "repost") {
-		const body = {
-			collection: "app.bsky.feed.repost",
-			repo: did,
-			record : {
-				"$type": "app.bsky.feed.repost",
-				subject: {
-					uri: metadata.uri,
-					cid: metadata.cid
-				},
-				createdAt: date,
-			}
-		};
+        target.actions.delete("unlike");
+        target.actions.add("like");
+        return target;
+    }
+    else if (actionId == "repost") {
+        const body = {
+            collection: "app.bsky.feed.repost",
+            repo: did,
+            record : {
+                "$type": "app.bsky.feed.repost",
+                subject: {
+                    uri: metadata.uri,
+                    cid: metadata.cid
+                },
+                createdAt: date,
+            }
+        };
 
-		const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
-		const rkey = jsonObject.uri.split("/").pop();
+        const jsonObject = await fetch.post(`${site}/xrpc/com.atproto.repo.createRecord`, { json: body }).json();
+        const rkey = jsonObject.uri.split("/").pop();
 
-		metadata.repostRkey = rkey;
-		target.metadata = metadata;
-		target.actions.delete("repost");
-		target.actions.add("unrepost");
-		return target;
-	}
-	else if (actionId == "unrepost") {
-		const body = {
-			collection: "app.bsky.feed.repost",
-			repo: did,
-			rkey: metadata.repostRkey
-		};
+        metadata.repostRkey = rkey;
+        target.metadata = metadata;
+        target.actions.delete("repost");
+        target.actions.add("unrepost");
+        return target;
+    }
+    else if (actionId == "unrepost") {
+        const body = {
+            collection: "app.bsky.feed.repost",
+            repo: did,
+            rkey: metadata.repostRkey
+        };
 
-		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
+        await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
 
-		target.actions.delete("unrepost");
-		target.actions.add("repost");
-		return target;
-	}
-	else if (actionId == "save") {
-		const body = {
-			uri: metadata.uri,
-			cid: metadata.cid
-		};
+        target.actions.delete("unrepost");
+        target.actions.add("repost");
+        return target;
+    }
+    else if (actionId == "save") {
+        const body = {
+            uri: metadata.uri,
+            cid: metadata.cid
+        };
 
-		await fetch.post(`${site}/xrpc/app.bsky.bookmark.createBookmark`, { json: body });
+        await fetch.post(`${site}/xrpc/app.bsky.bookmark.createBookmark`, { json: body });
 
-		target.actions.delete("save");
-		target.actions.add("unsave");
-		return target;
-	}
-	else if (actionId == "unsave") {
-		const body = {
-			uri: metadata.uri
-		};
+        target.actions.delete("save");
+        target.actions.add("unsave");
+        return target;
+    }
+    else if (actionId == "unsave") {
+        const body = {
+            uri: metadata.uri
+        };
 
-		await fetch.post(`${site}/xrpc/app.bsky.bookmark.deleteBookmark`, { json: body });
+        await fetch.post(`${site}/xrpc/app.bsky.bookmark.deleteBookmark`, { json: body });
 
-		target.actions.delete("unsave");
-		target.actions.add("save");
-		return target;
-	}
-	else if (actionId == "thread" || actionId == "replies") {
-		const uri = metadata.uri;
-		const json = await fetch(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`).json();
-		const firstItem = json["thread"];
+        target.actions.delete("unsave");
+        target.actions.add("save");
+        return target;
+    }
+    else if (actionId == "thread" || actionId == "replies") {
+        const uri = metadata.uri;
+        const json = await fetch(`${site}/xrpc/app.bsky.feed.getPostThread?uri=${uri}`).json();
+        const firstItem = json["thread"];
 
-		let results = [];
-		let parents = parentsForItem(firstItem, true);
-		results.push(...parents);
+        let results = [];
+        let parents = parentsForItem(firstItem, true);
+        results.push(...parents);
 
-		// Rebuild the target from the thread response instead of reusing the item that launched the action: only the
-		// thread's own postView carries `viewer`, so this is where a post that arrived without one — a quote embed,
-		// say — picks up its real like/repost state and stops being the one actionless post in its own thread. Fall
-		// back to the original when the node is blocked or filtered out by the user's settings.
-		const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true) : null;
-		results.push(rebuiltTarget ?? target);
+        // Rebuild the target from the thread response instead of reusing the item that launched the action: only the
+        // thread's own postView carries `viewer`, so this is where a post that arrived without one — a quote embed,
+        // say — picks up its real like/repost state and stops being the one actionless post in its own thread. Fall
+        // back to the original when the node is blocked or filtered out by the user's settings.
+        const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true) : null;
+        results.push(rebuiltTarget ?? target);
 
-		for (const reply of firstItem.replies ?? []) {
-			results.push(postForItem(reply, true));
-		}
-		return results;
-	}
-	else if (actionId == "delete") {
-		// The post's rkey is the last path component of its at:// uri; the repo is your own DID (you can only
-		// delete your own posts).
-		const body = {
-			collection: "app.bsky.feed.post",
-			repo: did,
-			rkey: metadata.uri.split("/").pop()
-		};
-		await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
-		return [Item.delete(target.uri)];
-	}
-	else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
-		return composeDraft(actionId, target, metadata);
-	}
-	else if (actionId == "send") {
-		// Here `target` is the draft. Create the post; nothing to return (createRecord only yields {uri, cid}).
-		const draft = target;
-		const attributes = draft.attributeValues ?? {};
-		const createdAt = new Date().toISOString();
-		const record = {
-			"$type": "app.bsky.feed.post",
-			text: draft.body,
-			createdAt: createdAt,
-		};
-		if (attributes.language != null) { record.langs = [attributes.language]; }
-		if (draft.metadata.parentUri != null) {
-			record.reply = {
-				root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
-				parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
-			};
-		}
-		// The post's ONE media embed is a video, image set, or link card (mutually exclusive); a quote is a `record`
-		// embed. Media + quote combine via `recordWithMedia`; either can stand alone. Route by each media's `mediaType`.
-		const mediaAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
-		const videoAttachment = mediaAttachments.find(a => a.mediaType === "video");
-		const imageAttachments = mediaAttachments.filter(a => a.mediaType === "image");
-		const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
-		let mediaEmbed = null;
-		if (videoAttachment != null) {
-			mediaEmbed = await buildVideoEmbed(videoAttachment);
-		} else if (imageAttachments.length > 0) {
-			mediaEmbed = await buildImagesEmbed(imageAttachments);
-		} else if (linkAttachment != null) {
-			mediaEmbed = await buildExternalEmbed(linkAttachment);
-		}
-		if (draft.metadata.quoteUri != null) {
-			const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
-			record.embed = mediaEmbed != null
-				? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: mediaEmbed }
-				: quoteEmbed;
-		} else if (mediaEmbed != null) {
-			record.embed = mediaEmbed;
-		}
-		const facets = await buildFacets(draft.body);
-		if (facets.length > 0) { record.facets = facets; }
-		const rkey = draft.metadata.rkey;
-			// Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
-			// do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
-			// rkey is known ahead, so the gates can reference the post URI in the same batch. We deliberately DON'T pass
-			// `validate: true`: with atproto's default optimistic validation, a self-hosted/older PDS that doesn't know
-			// a lexicon (a threadgate, or a gallery embed) stores the record fail-open instead of rejecting it — the
-			// AppView is the authority on render. Forcing validation would break exactly those arbitrary-PDS setups.
-			const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
-			const writes = [
-				{ "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
-				...gateWrites(attributes, postUri, rkey, createdAt, draft.metadata.parentUri != null),
-			];
-			await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
-	}
-	else {
-		throw new Error(`actionId "${actionId}" not implemented`);
-	}
+        for (const reply of firstItem.replies ?? []) {
+            results.push(postForItem(reply, true));
+        }
+        return results;
+    }
+    else if (actionId == "delete") {
+        // The post's rkey is the last path component of its at:// uri; the repo is your own DID (you can only
+        // delete your own posts).
+        const body = {
+            collection: "app.bsky.feed.post",
+            repo: did,
+            rkey: metadata.uri.split("/").pop()
+        };
+        await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
+        return [Item.delete(target.uri)];
+    }
+    else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
+        return composeDraft(actionId, target, metadata);
+    }
+    else if (actionId == "send") {
+        // Here `target` is the draft. Create the post; nothing to return (createRecord only yields {uri, cid}).
+        const draft = target;
+        const attributes = draft.attributeValues ?? {};
+        const createdAt = new Date().toISOString();
+        const record = {
+            "$type": "app.bsky.feed.post",
+            text: draft.body,
+            createdAt: createdAt,
+        };
+        if (attributes.language != null) { record.langs = [attributes.language]; }
+        if (draft.metadata.parentUri != null) {
+            record.reply = {
+                root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
+                parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
+            };
+        }
+        // The post's ONE media embed is a video, image set, or link card (mutually exclusive); a quote is a `record`
+        // embed. Media + quote combine via `recordWithMedia`; either can stand alone. Route by each media's `mediaType`.
+        const mediaAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
+        const videoAttachment = mediaAttachments.find(a => a.mediaType === "video");
+        const imageAttachments = mediaAttachments.filter(a => a.mediaType === "image");
+        const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
+        let mediaEmbed = null;
+        if (videoAttachment != null) {
+            mediaEmbed = await buildVideoEmbed(videoAttachment);
+        } else if (imageAttachments.length > 0) {
+            mediaEmbed = await buildImagesEmbed(imageAttachments);
+        } else if (linkAttachment != null) {
+            mediaEmbed = await buildExternalEmbed(linkAttachment);
+        }
+        if (draft.metadata.quoteUri != null) {
+            const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
+            record.embed = mediaEmbed != null
+                ? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: mediaEmbed }
+                : quoteEmbed;
+        } else if (mediaEmbed != null) {
+            record.embed = mediaEmbed;
+        }
+        const facets = await buildFacets(draft.body);
+        if (facets.length > 0) { record.facets = facets; }
+        const rkey = draft.metadata.rkey;
+            // Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
+            // do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
+            // rkey is known ahead, so the gates can reference the post URI in the same batch. We deliberately DON'T pass
+            // `validate: true`: with atproto's default optimistic validation, a self-hosted/older PDS that doesn't know
+            // a lexicon (a threadgate, or a gallery embed) stores the record fail-open instead of rejecting it — the
+            // AppView is the authority on render. Forcing validation would break exactly those arbitrary-PDS setups.
+            const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
+            const writes = [
+                { "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
+                ...gateWrites(attributes, postUri, rkey, createdAt, draft.metadata.parentUri != null),
+            ];
+            await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+    }
+    else {
+        throw new Error(`actionId "${actionId}" not implemented`);
+    }
 }
