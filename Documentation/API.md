@@ -35,6 +35,8 @@ The list below summarizes what changed at each version so you can upgrade an old
   * [`item.actions`](#actions-set) is a `Set` of action ids, managed with `item.actions.add(id)` / `item.actions.delete(id)` (replacing the old per-action value strings).
   * optional [presentation attributes](#action-presentation) on an action — `priority`, `group`, and `destructive` — control where and how it appears.
   * [`Item.delete(uri)`](#removing-an-item) reports an item as removed (from `load()` or `performAction()`), so a connector can delete a post or reconcile content that no longer exists.
+  * the [`refresh`](#action-roles) action role — reload a single item in place (e.g. to refresh poll results).
+  * **interactive polls** — a [`PollAttachment`](#pollattachment) becomes votable when its options carry an `id` and the poll sets an `action`; Tapestry submits the user's selection through `performAction` (with the new `value`/`voters` fields on the read side). See [Voting](#voting).
 
 **Composing** lets an action open a composer and create posts:
 
@@ -470,6 +472,30 @@ Set to `true` if the poll allows mutliple choices or not.
 
 > **Compatibility:** Requires `minimum_app_version` >= 1.3.
 
+#### voters: Number (optional)
+
+The total number of distinct voters. Shown when set (e.g. "26 Voters"). For a **multiple-choice** poll each option's percentage is computed against `voters` (so options can each approach 100%); for a single-choice poll you can leave it unset and Tapestry uses the summed option `votes`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+#### value: String (optional)
+
+The current user's vote, if known: the [`id`](#id-string-optional) of the option they chose, or a comma-joined list of `id`s for a multiple-choice poll. When set (and matching real option `id`s), Tapestry shows the poll's results with the user's choice(s) checked. `value` records *what* was voted; it does **not** by itself decide whether the poll can still be voted in — that's governed only by [`action`](#action-string-optional). So a service that lets people change their vote can set `value` *and* keep `action` (Tapestry pre-selects the recorded choice and leaves the Vote control available); a service that doesn't (e.g. Mastodon) drops `action` once voted, so the control goes away.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+#### action: String (optional)
+
+The `id` of an action (in the `items` section of [`actions.json`](#actionsjson)) that Tapestry performs when the user casts a vote. Setting it — together with an `id` on every [`PollOption`](#polloption) — is what makes a poll **votable** (see Voting below), independent of whether [`value`](#value-string-optional) is set. Omit it for a poll that can't be voted in — closed, one this connector can't submit for, or (on a service where a vote is final) one that's already been voted in.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+#### Voting
+
+To make a poll votable, give every [`PollOption`](#polloption) an `id` and set the poll's `action` to the id of an action in your `items` actions. (That action just needs to exist — you don't add it to `item.actions`; it's referenced only by the poll.) When the user picks option(s) and taps Vote, Tapestry calls your `performAction(actionId, item, value)` where **`value`** is the chosen option `id`, or a comma-joined list of `id`s for a multiple-choice poll. Find the poll on `item.attachments`, read whatever you stored in the poll's `metadata` (e.g. the service's poll id — the vote action gets the *item*, not the poll directly), submit the vote, then set the poll's `value` and return the updated `item`. Whether the poll stays votable afterward is up to you: on a service where a vote is final (e.g. Mastodon), also drop the poll's `action` so the Vote control disappears; on a service that allows changing a vote, leave `action` set and Tapestry keeps the control available with the recorded choice pre-selected.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 #### metadata: Dictionary
 
 A per-attachment `[String: String]` bag for the connector's own use, mirroring [`item.metadata`](#metadata-dictionary) — most useful across the compose/edit round-trip. See `MediaAttachment`'s `metadata`.
@@ -494,6 +520,12 @@ const poll = PollAttachment.create([a, b, c]);
 If `votes` is left unspecified on one or more options in a `PollAttachment`, Tapestry will not show vote totals or percentages.
 
 > **Compatibility:** Requires `minimum_app_version` >= 1.3.
+
+#### id: String (optional)
+
+A stable identifier for this option — what a poll's [`value`](#value-string-optional) references, so **voting is impossible without it**. Any stable string works (Mastodon uses the zero-based choice index: `"0"`, `"1"`, …). `PollOption.create(title, votes, id)` sets it, or assign `option.id` directly.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ### Draft
@@ -2629,7 +2661,7 @@ This example extracts a value from the TXT record content using a capture group:
 ---
 ### actions.json
 
-This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `name` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below).
+This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `name` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below) and is **optional** but highly enocouraged. There are a few fallback icons based on an action's `role`, but most will get a generic placeholder so setting something explicit is a good idea.
 
 As of Tapestry 1.4, actions can also have an optional `role` that further determines where the action is rendered in the UI, assumptions about the action's return values, and how it is expected to behave. (See roles listed below.)
 
@@ -2740,6 +2772,10 @@ A context action is expected to return additional context about the item such as
 **`"compose"`**
 
 A compose action returns a [`Draft`](#draft) from `performAction()` instead of items, which opens the composer — for example, a "reply" action. See [Composing](#composing) for the full flow. (Added in Tapestry 2.0.)
+
+**`"refresh"`**
+
+A refresh action reloads a single item in place: re-fetch it and return the same (updated) [`Item`](#item) from `performAction()` — to refresh things like poll results (or, in future, per-item stats). It's an *immediate* action — no UI is shown for its result, it just replaces the item — but the `refresh` role marks it so Tapestry gives it a default icon (a reload symbol) and default placement (the overflow menu), and can surface it contextually where it's useful (for example, a reload control on an open poll's results). Because it's a plain re-fetch it usually needs no authentication, so it's a good fit even for read-only connector variants. (Added in Tapestry 2.0.)
 
 #### Action Targets
 
