@@ -7,19 +7,6 @@
             "role": "compose"
         },
         {
-            "id": "send",
-            "name": "Post",
-            "icon": "paperplane",
-            "target": "draft"
-        },
-        {
-            "id": "newPost",
-            "name": "New Post",
-            "icon": "square.and.pencil",
-            "role": "compose",
-            "target": "feed"
-        },
-        {
             "id": "boost",
             "name": "Boost",
             "icon": "tapestry.boost",
@@ -75,6 +62,21 @@
             "name": "Thread",
             "icon": "bubble.left.and.text.bubble.right",
             "role": "context"
+        }
+    ],
+    "drafts": [
+        {
+            "id": "send",
+            "name": "Post",
+            "icon": "paperplane"
+        }
+    ],
+    "feeds": [
+        {
+            "id": "newPost",
+            "name": "New Post",
+            "icon": "square.and.pencil",
+            "role": "compose"
         }
     ]
 }

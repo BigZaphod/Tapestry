@@ -38,7 +38,7 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Composing** lets an action open a composer and create posts:
 
-  * the [`compose`](#action-roles) action role, the [`target`](#action-target) action attribute, and the [`Draft`](#draft) object (for example, replying to a post).
+  * the [`compose`](#action-roles) action role, the [`items`/`drafts`/`feeds` action targets](#action-targets), and the [`Draft`](#draft) object (for example, replying to a post).
   * composer content fields (`body` / `title` / `contentWarning`), a live character counter, and connector-declared setting attributes (visibility, language, per-post permissions, …) — declared per-draft with [`draft.rules`](#rules-object), the user's choices arriving in [`draft.attributeValues`](#attributevalues-dictionary).
   * connector-declared **attachment rules** — what a post may attach (images, video, a link card, a poll, a quote) and how they combine — via [`draft.rules.attachments`](#rules--attachments).
   * connector-declared **emoji shortcodes** — a set of custom emoji powering the composer's built-in `:`-autocomplete — via [`draft.rules.shortcodes`](#rules--emoji-shortcodes).
@@ -498,7 +498,7 @@ If `votes` is left unspecified on one or more options in a `PollAttachment`, Tap
 ---
 ### Draft
 
-A `Draft` represents something the user is composing, such as a reply. An action with the [`compose`](#action-roles) role returns a `Draft` from `performAction()` to open the composer; a *submit* action (see [`target`](#action-target)) then receives the edited `Draft` and creates the post. Create one with:
+A `Draft` represents something the user is composing, such as a reply. An action with the [`compose`](#action-roles) role returns a `Draft` from `performAction()` to open the composer; a *submit* action (see [action targets](#action-targets)) then receives the edited `Draft` and creates the post. Create one with:
 
 ```javascript
 const draft = Draft.create();
@@ -543,7 +543,7 @@ A `[String: String]` bag of connector state that round-trips with the draft, exa
 
 #### actions: Set
 
-The ids of the *submit* actions that apply to this draft (the buttons shown in the composer), managed like `item.actions` with `draft.actions.add(id)` / `draft.actions.delete(id)`. Each such action must declare `target: "draft"` in `actions.json`.
+The ids of the *submit* actions that apply to this draft (the buttons shown in the composer), managed like `item.actions` with `draft.actions.add(id)` / `draft.actions.delete(id)`. Each such action is defined in the `drafts` target of `actions.json`.
 
 #### attributeValues: Dictionary
 
@@ -872,7 +872,7 @@ The array may also include *removals* if the connector can discover that content
 Tapestry calls this function when an action needs to be performed by the connector.
 
   * actionId: A `String` with the action id
-  * target: the subject of the action, which follows the action's [`target`](#action-target) attribute — the `Item` the action was requested for (the default), or a [`Draft`](#draft) for a `target: "draft"` action. Handlers that only deal with items commonly name this parameter `item`, which is fine for that case.
+  * target: the subject of the action, which follows the [target it is defined under](#action-targets) — the `Item` the action was requested for (an `items` action), or a [`Draft`](#draft) for a `drafts` action. Handlers that only deal with items commonly name this parameter `item`, which is fine for that case.
   * actionValue: A compatibility hook you can usually ignore. Data for an action lives in `item.metadata`; `actionValue` carries the value stored for this action on items created by a *pre-2.0* version of the connector (before `metadata` existed), letting a connector migrating from an older version fall back to it. It is an empty string for items created by a 2.0+ connector.
 
 Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
@@ -883,7 +883,7 @@ Any data an action requires can be set in (and then read from) `item.metadata` o
 
 #### Composing
 
-An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer. The composer's *submit* actions declare [`target: "draft"`](#action-target), so for those `performAction`'s second argument is the edited `Draft` rather than an `Item`. A submit action then either:
+An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer. The composer's *submit* actions are in the [`drafts` target](#action-targets), so for those `performAction`'s second argument is the edited `Draft` rather than an `Item`. A submit action then either:
 
   * **succeeds** — returns the created `Item`(s), or nothing; the composer closes.
   * **throws an `Error`** — reports a failure; the composer stays open with the draft intact and shows the error's [`userMessage`](#errors). Throwing is how a submit reports *anything* wrong — a validation problem the app couldn't catch, a server rejection, whatever — so the message you throw is the feedback the user sees.
@@ -2639,6 +2639,8 @@ The `actions.json` file must define all possible actions, however when displayin
 
 Actions are displayed or preferred in the order they are defined in the `actions.json` file.
 
+Actions are grouped by **target** — what they operate on — see [Action Targets](#action-targets). The common target is `items` (actions on a timeline item); `drafts` and `feeds` exist for composing (Tapestry 2.0+). A connector that only acts on items needs just the `items` target.
+
 ```json
 {
 	"items": [
@@ -2658,9 +2660,11 @@ Actions are displayed or preferred in the order they are defined in the `actions
 			"icon": "bubble",
 			"role": "context"
 		}
-	],
+	]
 }
 ```
+
+> **Compatibility:** The `items` section predates 2.0 and is unchanged. The `drafts` and `feeds` sections were added in Tapestry 2.0; older versions ignore them.
 
 When returning an `Item` from `load()`, use `item.actions.add()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
 
@@ -2737,30 +2741,36 @@ A context action is expected to return additional context about the item such as
 
 A compose action returns a [`Draft`](#draft) from `performAction()` instead of items, which opens the composer — for example, a "reply" action. See [Composing](#composing) for the full flow. (Added in Tapestry 2.0.)
 
-#### Action Target
+#### Action Targets
 
-An optional `target` sets what an action operates on — the object Tapestry passes to `performAction` as its second argument. (Added in Tapestry 2.0.)
+An action's **target** — what it operates on, and the object Tapestry passes to `performAction` as its second argument — is set by which top-level array it appears in: the array an action lives in *is* its target. (The `drafts` and `feeds` targets were added in Tapestry 2.0.)
 
-  * **`"item"`** — the action operates on a timeline item, which is passed to `performAction`. This is the default and can be omitted.
-  * **`"draft"`** — the action operates on a [`Draft`](#draft); `performAction` receives the `Draft`. These are the composer's *submit* actions — they appear as buttons **in the composer** (added with `draft.actions.add(id)`), not on a timeline item.
+  * **`items`** — the action operates on a timeline item, which is passed to `performAction`. This is the common case (favorite, boost, reply, thread, …).
+  * **`drafts`** — the action operates on a [`Draft`](#draft); `performAction` receives the `Draft`. These are the composer's *submit* actions — they appear as buttons **in the composer** (added with `draft.actions.add(id)`), not on a timeline item.
+  * **`feeds`** — the action operates on the feed/account itself, with no subject — e.g. a "new post" action that starts a fresh compose.
 
-A composer is usually made of **two** actions that work together — one that *opens* it and one that *submits* it — and they use different attributes, which can be confusing at first:
+A composer is usually made of **two** actions that work together — one that *opens* it and one that *submits* it — and they have different targets, which can be confusing at first:
 
-  * The **opening** action (`reply` below) lives on a timeline item. It uses the [`compose`](#action-roles) **role** (so returning a `Draft` opens the composer) and the default `item` target. It builds the draft and adds the submit action to it with `draft.actions.add("send")`.
-  * The **submit** action (`send` below) lives in the composer, so it has no `role` (a role only matters for how an action behaves when tapped on a timeline item). What makes it a submit action is its `target: "draft"`.
+  * The **opening** action (`reply` below) is an `items` action. It uses the [`compose`](#action-roles) **role** (so returning a `Draft` opens the composer). It builds the draft and adds the submit action to it with `draft.actions.add("send")`.
+  * The **submit** action (`send` below) lives in the composer, so it has no `role` (a role only matters for how an action behaves when tapped on a timeline item). What makes it a submit action is that it's in the `drafts` target.
 
 ```json
 {
-    "id": "reply",
-    "name": "Reply",
-    "icon": "arrow.turn.up.left",
-    "role": "compose"
-},
-{
-    "id": "send",
-    "name": "Post",
-    "icon": "paperplane",
-    "target": "draft"
+    "items": [
+        {
+            "id": "reply",
+            "name": "Reply",
+            "icon": "arrow.turn.up.left",
+            "role": "compose"
+        }
+    ],
+    "drafts": [
+        {
+            "id": "send",
+            "name": "Post",
+            "icon": "paperplane"
+        }
+    ]
 }
 ```
 
