@@ -342,6 +342,9 @@ async function composeDraft(actionId, target, id) {
     // instance reports one, plus MAX_VIDEO_FRAMES (a source constant, not in the config). Size + dimensions are the
     // per-upload concern of fitMedia. A gifv obeys the same video limits.
     const videoLimit = { fps: instance?.configuration?.media_attachments?.video_frame_rate_limit ?? 120, frames: 36000 };
+    // Alt-text length cap the server enforces, straight from the instance's config. Newer Mastodon reports 10000
+    // (raised from 1500) — instances that don't report it are the older 1500-cap builds, so that's the fallback.
+    const altTextLimit = { maxLength: instance?.configuration?.media_attachments?.description_limit ?? 1500 };
     draft.rules = {
         characterUnit: "graphemes",
         // The main counter's limit (default 500) spans the body AND the content warning — both count against it.
@@ -376,7 +379,7 @@ async function composeDraft(actionId, target, id) {
             },
             combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
         },
-        media: { upload: "eager", supportsAltText: ["image", "animation", "video", "audio"], supportsFocusPoint: ["image", "animation"], limits: { video: videoLimit, animation: videoLimit } }
+        media: { upload: "eager", supportsAltText: ["image", "animation", "video", "audio"], supportsFocusPoint: ["image", "animation"], altTextCharacterLimit: altTextLimit, limits: { video: videoLimit, animation: videoLimit } }
     };
 
     if (actionId == "reply") {

@@ -807,7 +807,9 @@ function composeDraft(actionId, target, metadata) {
         // the post record at send (not on the uploaded blob), so editing it while an eager upload is in flight is
         // race-free. Video is capped at 3 minutes (the official client's constant — Bluesky exposes no limits API, only
         // a per-account daily quota); the 300 MB size cap is fitted by `uploadVideo`'s transform rather than declined.
-        media: { upload: "eager", supportsAltText: ["image", "video"], supportsFocusPoint: [], limits: { video: { seconds: 180 } } }
+        // Alt text isn't capped by the protocol at all (the lexicon puts no length on it); 2000 matches the official
+        // client's own limit — a courtesy ceiling, not a server rule.
+        media: { upload: "eager", supportsAltText: ["image", "video"], supportsFocusPoint: [], altTextCharacterLimit: { maxLength: 2000 }, limits: { video: { seconds: 180 } } }
     };
 
     if (actionId == "reply") {
