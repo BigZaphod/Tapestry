@@ -52,6 +52,10 @@
             "destructive": true
         },
         {
+            "id": "vote",
+            "name": "Vote"
+        },
+        {
             "id": "thread",
             "name": "Thread",
             "icon": "bubble.left.and.bubble.right",
@@ -62,6 +66,11 @@
             "name": "Thread",
             "icon": "bubble.left.and.text.bubble.right",
             "role": "context"
+        },
+        {
+            "id": "refresh",
+            "name": "Refresh",
+            "role": "refresh"
         }
     ],
     "drafts": [

@@ -257,16 +257,53 @@ function postForItem(item) {
 
     const poll = item["poll"];
     if (poll != null && poll.options != null && poll.expires_at != null) {
-        let attachment = PollAttachment.create();
-        attachment.options = poll.options.map((option) => PollOption.create(option.title, option.votes_count));
-        attachment.endDate = new Date(poll.expires_at);
-        attachment.multipleChoice = poll?.multiple ?? false;
-        attachments.push(attachment);
+        // The own-poll check needs external context (poll author vs. the authenticated user); expired/voted are
+        // read off the poll inside fillPollAttachment.
+        const notOwnPoll = item.account?.id !== getItem("userId");
+        attachments.push(fillPollAttachment(PollAttachment.create(), poll, notOwnPoll));
+        // Offer a reload of the results while the poll is still open — its counts can still change. Once it's over,
+        // results are final, so no refresh. (A public GET, so this works for the unauthenticated variants too.)
+        if (poll.expired !== true) {
+            post.actions.add("refresh");
+        }
     }
 
     post.attachments = attachments;
-	
+
     return post;
+}
+
+// Populate a poll attachment from a Mastodon poll object. Shared by the initial item build and the post-vote
+// update (the /votes response is itself an updated poll). Notes on the Mastodon shape:
+//   - option `id` is the zero-based choice index Mastodon votes by (so the app's vote value is index/indices).
+//   - `voters_count` is null for a single-choice poll, so `voters` is only set when present.
+//   - `own_votes` is [] (not null) for an authenticated-but-unvoted poll, so `value` is only set when the user
+//     actually voted; the app reads a value that matches an option as "already voted".
+//   - `action` (the vote affordance) is set only when you can actually cast a vote — not your own poll, not
+//     expired, not already voted — AND the connector's actions.json defines "vote". Otherwise the poll renders
+//     results-only; a valid `value` is what tells the app it's "voted" (the action isn't needed for that state).
+function fillPollAttachment(attachment, poll, notOwnPoll) {
+    attachment.options = poll.options.map((option, index) => PollOption.create(option.title, option.votes_count, String(index)));
+    attachment.endDate = new Date(poll.expires_at);
+    attachment.multipleChoice = poll?.multiple ?? false;
+    const canVote = notOwnPoll && poll.expired !== true && poll.voted !== true;
+    attachment.action = canVote ? "vote" : undefined;
+    attachment.metadata = { id: poll.id };
+    if (poll.voters_count != null) {
+        attachment.voters = poll.voters_count;
+    }
+    if (poll.voted === true && Array.isArray(poll.own_votes) && poll.own_votes.length > 0) {
+        attachment.value = poll.own_votes.join(",");
+    }
+    return attachment;
+}
+
+// Re-fetch a single status by id and rebuild the item — the worker for the `refresh` (role: "refresh") action, so
+// a poll's results (and, eventually, any per-item stats) can be reloaded in place. A public GET, so it works for
+// the unauthenticated variants too.
+async function refreshItem(id) {
+    const status = await fetch(`${site}/api/v1/statuses/${id}`).json();
+    return [postForItem(status)];
 }
 
 // By being in mastodon-shared.js, all of the mastodon connectors get this.
@@ -651,6 +688,25 @@ async function performAction(actionId, target, actionValue) {
     else if (actionId == "delete") {
         await fetch.delete(`${site}/api/v1/statuses/${id}`);
         return [Item.delete(target.uri)];
+    }
+    else if (actionId == "refresh") {
+        // Reload this item in place (currently surfaced on open polls to refresh results). `id` is the status id.
+        return refreshItem(id);
+    }
+    else if (actionId == "vote") {
+        // `target` is the item; the poll rides in its attachments and `actionValue` is the chosen option index
+        // (or comma-joined indices for a multiple-choice poll) the app collected. Mastodon votes by zero-based
+        // choice index and returns the updated poll, which we reflect back onto the attachment before returning.
+        const poll = (target.attachments ?? []).find(a => a.kind == "poll");
+        if (poll == null) {
+            throw new Error("There is no poll to vote in.");
+        }
+        const choices = actionValue.split(",").filter(s => s.length > 0).map(s => parseInt(s, 10));
+        const updated = await fetch.post(`${site}/api/v1/polls/${poll.metadata.id}/votes`, { json: { choices: choices } }).json();
+        // notOwnPoll:true (you just voted, so it isn't yours). The response has voted:true, so fillPollAttachment
+        // clears the vote action and populates `value` — the app shows the voted confirmation from `value` alone.
+        fillPollAttachment(poll, updated, true);
+        return target;
     }
     else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
         return composeDraft(actionId, target, id);

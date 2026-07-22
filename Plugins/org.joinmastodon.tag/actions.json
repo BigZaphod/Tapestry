@@ -11,6 +11,11 @@
             "name": "Thread",
             "icon": "bubble.left.and.text.bubble.right",
             "role": "context"
+        },
+        {
+            "id": "refresh",
+            "name": "Refresh",
+            "role": "refresh"
         }
     ]
 }
