@@ -853,7 +853,6 @@ function composeAttributes(isReply) {
             defaultValue: "everybody",
             requireSelection: true,
             icon: "bubble.left.and.bubble.right",
-            description: "Everybody can reply by default. Choose “Nobody”, or combine groups to limit who can reply.",
             choices: [
                 { value: "everybody", prompt: "Everybody", exclusive: true },
                 { value: "nobody", prompt: "Nobody", exclusive: true },
