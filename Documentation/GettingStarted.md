@@ -94,7 +94,7 @@ In Tapestry, the `site` specifies a location on the Internet where data can be c
 	"id": "com.usetapestry.mystic9ball",
 	"display_name": "Mystic 9-Ball",
 	"minimum_app_version": "2.0",
-	"site": "https://usetapestry.com/samples/mystic9ball",
+	"site": "https://usetapestry.com/samples/mystic9ball"
 }
 ```
 
@@ -110,7 +110,7 @@ Let’s fill in some of the other configuration values to get a better icon:
 	"display_name": "Mystic 9-Ball",
 	"minimum_app_version": "2.0",
 	"site": "https://usetapestry.com/samples/mystic9ball",
-	"icon": "https://usetapestry.com/samples/mystic9ball/images/icon.png",
+	"icon": "https://usetapestry.com/samples/mystic9ball/images/icon.png"
 }
 ```
 
@@ -226,11 +226,11 @@ async function load() {
 }
 ```
 
-The first thing you’ll do with the text is convert it to a JSON object with `json = JSON.parse(text)`. Then `json.timestamp`, `json.description`, and `json.image` can be used to improve the item for our connector.
+The `await fetch(endpoint).json()` call fetches the endpoint and parses the JSON response into an object in a single step. Then `json.timestamp`, `json.description`, and `json.image` can be used to improve the item for our connector.
 
-Also note that the item’s body is now specified using HTML. Even if you’re familiar with this markup, you should check out [how Tapestry uses  HTML](https://github.com/TheIconfactory/Tapestry/blob/main/Documentation/API.md#html-content). 
+Also note that the item’s body is now specified using HTML. Even if you’re familiar with this markup, you should check out [how Tapestry uses HTML](https://github.com/TheIconfactory/Tapestry/blob/main/Documentation/API.md#html-content). 
 
-One issue with the script above is that the URI never changes; only the date gets updated. Tapestry will detect this and constantly put the item at the top of the timeline. From a user’s point-of-view, it’s better to make sure that each URI produced is unique and keeps it’s place in the universal timeline.
+One issue with the script above is that the URI never changes; only the date gets updated. Tapestry will detect this and constantly put the item at the top of the timeline. From a user’s point-of-view, it’s better to make sure that each URI produced is unique and keeps its place in the universal timeline.
 
 Luckily, we can easily do this using information in the JSON data:
 
@@ -392,7 +392,7 @@ The style is defined in `plugin-config.json` with an `item_style` property and a
 	"minimum_app_version": "2.0",
 	"site": "https://usetapestry.com/samples/mystic9ball",
 	"icon": "https://usetapestry.com/samples/mystic9ball/images/icon.png",
-	"item_style": "post",
+	"item_style": "post"
 }
 
 ```
@@ -429,7 +429,7 @@ Annotations can be used to indicate the source of an item. For example, the acco
 
 Properties of an `Item` are easy to verify. When you click on the document icon at the bottom of the _Preview_ panel, this view is presented:
 
-![A sheet showing all the properties of an Mystic 9-Ball item](images/7-ItemProperties.png)
+![A sheet showing all the properties of a Mystic 9-Ball item](images/7-ItemProperties.png)
 
 
 ### Getting Attached
@@ -446,7 +446,7 @@ When you are working with an API that provides media explicitly, it's easier to 
 	"site": "https://usetapestry.com/samples/mystic9ball",
 	"icon": "https://usetapestry.com/samples/mystic9ball/images/icon.png",
 	"item_style": "article",
-	"provides_attachments": true,
+	"provides_attachments": true
 }
 ```
 
@@ -494,7 +494,7 @@ If a feed that’s using your connector needs a specific name (such as a blog na
 
 You may also find that the `lookupIcon()` function is useful for [getting the icon](https://github.com/TheIconfactory/Tapestry/blob/main/Documentation/API.md#lookupicon) associated with a URL.
  
-The [JSON Feed connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.jsonfeed/plugin.js) is a good example of how verification can be implemented.
+The [Mastodon connector](https://github.com/TheIconfactory/Tapestry/blob/main/Plugins/org.joinmastodon/plugin.js) is a good example of how verification can be implemented.
 
  
 ### Web Inspector
@@ -529,6 +529,6 @@ If you come across a situation where Tapestry can't authorize with OAuth or JWT,
 
 Hopefully this has been an enjoyable excursion through the Tapestry API and inspires you to make connectors of your own. We truly believe that this approach will help the open web to flourish, and that can’t happen without your help!
 
-If you find errors or omissions in this documentation, please feel free ot open an issue.
+If you find errors or omissions in this documentation, please feel free to open an issue.
 
 

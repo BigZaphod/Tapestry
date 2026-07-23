@@ -77,6 +77,127 @@ Connectors that do **not** set `minimum_app_version` to 2.0 or later keep all pr
 The original API. `load()`, `verify()`, and `performAction()` report results through the `processResults()`, `processVerification()`, and `actionComplete()` functions, and report failures with `processError()`. These remain the behavior for any connector with `minimum_app_version` < 2.0.
 
 ---
+## Concepts
+
+Start here. The reference sections that follow — [Objects](#objects), [Interface Functions](#interface-functions), [Utility Functions](#utility-functions), [Configuration](#configuration) — document each type, function, and file in detail. This section describes the *systems* they add up to, building from the smallest possible connector up through composing.
+
+### A Minimal Connector
+
+The smallest useful connector implements one function — [`load()`](#load) — and returns an array of [`Item`](#item) objects. Tapestry calls `load()` whenever it wants fresh content, and whatever you return becomes timeline items.
+
+```javascript
+async function load() {
+    const posts = await fetch(`${site}/api/posts`).json();   // `site` is provided to every connector
+    return posts.map(post => {
+        const item = Item.createWithUriDate(post.url, new Date(post.published));
+        item.body = post.text;   // plain text, or HTML
+        return item;
+    });
+}
+```
+
+Every item **must** have two things: a `uri` (a stable, unique identifier for the item) and a `date` (used to order it in the timeline). Everything else — `title`, `body`, `author`, `attachments` — is optional. Build items with the `create…` factories or as plain object literals; [Objects](#objects) covers both.
+
+If loading fails, `throw` an `Error` and Tapestry shows it to the user. That is the whole contract: return items, or throw. Reading a source is very often *only* this one function — no authentication, no actions, no composing. Everything below is something you add on top of it.
+
+### Actions
+
+An **action** lets the user *do* something to an item — favorite it, reply, boost, delete, open its thread, refresh it. Each action is declared in [`actions.json`](#actionsjson); a connector attaches the ones that apply to an item with `item.actions.add(id)`, and Tapestry renders them as buttons or overflow-menu entries. When the user taps one, Tapestry calls [`performAction(actionId, target, …)`](#performaction); the connector does the work and returns the results or `throw`s an `Error` to report a failure.
+
+Two properties shape what an action is:
+
+  * **role** — what kind of action it is, and what its result means. A role-less action typically mutates an item in place; a [`context`](#action-roles) action returns a conversation thread; a [`refresh`](#action-roles) action re-fetches a single item; a [`compose`](#action-roles) action returns a [`Draft`](#draft) which opens the composer.
+  * **target** — what the action operates on. This also defines the object (or lack thereof) that Tapestry hands to `performAction` as its second argument. It's defined by the specific array in which the action lives within `actions.json`: [`items`](#action-targets) (a timeline item), `drafts` (a composer submit), or `feeds` (the account itself).
+
+That single dispatch point — `performAction` — is what most interaction is built on. See [`actions.json`](#actionsjson) for the full schema, the roles, the targets, and presentation options.
+
+Item actions bring interactivity to items in the timeline such as boosting, favoriting, bookmarking, or whatever other unique capability your connector's service supports.
+
+### Interactive Polls
+
+A [`PollAttachment`](#pollattachment) on an item renders as a poll — its options, vote counts, and an optional countdown. To make it interactive and allow the user to **vote** in the poll, every [`PollOption`](#polloption) needs an `id` and the poll's `action` must be set to an [`items` action](#action-targets) id defined in your `actions.json`. When the user picks an option and taps Vote, Tapestry will then run that action through [`performAction`](#performaction) with the chosen option `id` as the value (the 3rd parameter of `performAction`); the connector code submits the vote and returns the updated item to reflect the vote in the timeline. Whether the poll stays votable afterward — for a service that lets people change their vote — is up to the connector. See [Voting](#voting) for the full round-trip.
+
+Voting, then, is just an [action](#actions) the poll routes to. And a poll isn't only something you *read*: a connector whose service supports it can let the user **create** one while [composing](#composing), by allowing a `poll` attachment in [`draft.rules.attachments`](#rules--attachments). The same `PollAttachment` shape crosses the bridge both ways — read as results, written as a new poll.
+
+### Composing
+
+An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items which tells Tapestry what capabilities the composer should enable. This is useful for defining an action that can reply to an item, for example, so it comes pre-populated with a username or other settings. One of the many properties of a `Draft` includes an action to use when a user presses the submit button on the composer. The composer's *submit* actions are defined in the [`drafts` target](#action-targets) section, so for those `performAction`'s second argument becomes the now-edited `Draft` that the `compose` action originally used to open the composer, but modified by the user.
+
+A submit action can either:
+
+  * **succeed** — returns the created `Item`(s), or nothing; the composer closes.
+  * **throw an `Error`** — reports a failure; the composer stays open with the draft intact and shows the error's `userMessage` (if defined). Throwing is how a submit reports *anything* wrong — a validation problem the app couldn't catch, a server rejection, whatever — so the message you throw is the feedback the user sees. If you need to define your own error and set a nicer `userMessage`, do so.
+
+For example, a `reply` action opens a composer and a `send` action creates the post:
+
+```javascript
+async function performAction(actionId, target, actionValue) {
+    if (actionId == "reply") {
+        const item = target;   // the reply action's target is the item being replied to
+        const draft = Draft.create();
+        draft.header = "Reply to " + item.author.name;    // composer heading (not part of the post)
+        draft.body = item.author.username + " ";          // pre-fill the mention
+        draft.context = [item];
+        draft.metadata = { replyTo: item.metadata.id, idempotencyKey: crypto.randomUUID() };
+        draft.rules = {
+            fields: { body: {} },
+            attributes: [ { name: "language", type: "language" } ]   // offer a language picker
+        };
+        draft.actions.add("send");
+        return draft;
+    }
+    else if (actionId == "send") {
+        const draft = target;   // the send action's target is the Draft being submitted
+        const body = {
+            status: draft.body,
+            language: draft.attributeValues.language,     // the user's setting-attribute choice
+            in_reply_to_id: draft.metadata.replyTo
+        };
+        const headers = { "Idempotency-Key": draft.metadata.idempotencyKey };
+        const post = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
+        return [ Item.createWithUriDate(post.url, new Date(post.created_at)) /* …fill in the rest… */ ];
+    }
+}
+```
+
+#### Media
+
+A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a [`MediaAttachment`](#mediaattachment) object per attachment, of whichever kinds (`image`, `video`, `animation`, `audio`) your [attachment rules](#rules--attachments) allow. Your submit function turns each into the service's wire format. What an attachment carries — and how your submit function reads it — depends on the [`rules.media.upload`](#rules--media) mode you declared. A connector implements **one** media upload mode, not both:
+
+  * **`"eager"`** (the default) — the app pre-uploaded each attachment during composing via your [`uploadAttachment`](#uploadattachment) function which uploads the bytes and returns optional `metadata` to be associated with the attachment.
+  * **`"deferred"`** — the app does not pre-upload, so the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)) and your submit function uploads the bytes instead.
+
+A submit function for the default eager mode may want to read references or ids from the attachment's metadata:
+
+```javascript
+else if (actionId == "send") {
+    const draft = target;
+    const mediaIds = [];
+    for (const attachment of draft.attachments.filter(a => a.kind === "media")) {
+        const id = attachment.metadata.id;   // the ref your uploadAttachment returned
+        // Apply the user's alt text / focus point HERE, at submit — NOT at upload: they stay editable after a
+        // pre-upload, so applying them earlier would capture stale values. (Mastodon: PUT /api/v1/media/:id.)
+        if (attachment.text != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
+        mediaIds.push(id);
+    }
+    const post = await fetch.post(`${site}/api/v1/statuses`, { json: { status: draft.body, media_ids: mediaIds }, headers: { … } }).json();
+    return [ /* the created Item */ ];
+}
+```
+
+A `"deferred"` connector's submit function is the same shape, except each `id` comes from uploading the bytes right there — `const id = await uploadMedia(attachment.file)` instead. The alt-text / focus-point step in this example is identical either way.
+
+Composing populates a few of the media attachment's fields differently:
+
+  * **content** — an attachment the user added carries its bytes as a [`FileAsset`](#fileasset) in `file` (in `"eager"` mode this is the file your `uploadAttachment` produced; in `"deferred"` mode it's the original). An attachment that was originally supplied in the initial `Draft` (such as when editing a post), only carries the original `url` instead. So the content of a media attachment is only ever a `file` **or** `url`.
+  * **mediaType** — the kind the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`) — the same value [`uploadAttachment`](#uploadattachment) got as `attachedAs` (the app's cast target after any widening, not the file's intrinsic type — [`assetType()`](#assettype) reports that). Honor it when a service uploads kinds differently.
+  * **text** — the user's alt-text description (the same `text` field as on any media), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
+  * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object), when supported by the media rules and set by the user.
+  * **metadata** — your service ref bag. It is **always present** (an empty `{}` when there's no ref yet) and populated either by you when the `Draft` was created or by whatever you returned from `uploadAttachment`.
+
+Before uploading a file, fit it to the service's limits with the correct transform function based on the intended attachment type. There are several transform functions for different types of media: [`imageTransform`](#imagetransform), [`videoTransform`](#videotransform), [`animationTransform`](#animationtransform), or [`audioTransform`](#audiotransform). In eager mode, you call these functions in `uploadAttachment` based on the given `attachedAs` type. In deferred mode, you do this work in your submit function based on each attachment's `mediaType` property. Be sure to use the correctly-typed transformation function before you upload or else your uploaded media file might not be what you expected!
+
+---
 ## Variables
 
 Any variables that have been specified in `ui-config.json` are set before the script is executed. For example, the Mastodon connector specifies the following inputs:
@@ -256,7 +377,7 @@ The name of the creator. Can be an account’s full name, a bot name, or anythin
 
 #### username: String
 
-The name of the creator. Can be an account’s full name, a bot name, or anything to identify the data and source.
+The account handle for the creator — the `@`-name or short login used to identify the account, as distinct from the display `name` above (e.g. `@chockenberry` versus “Craig Hockenberry”).
 
 #### avatar: String
 
@@ -468,7 +589,7 @@ An optional date that the poll ends. If not specified, Tapestry renders the poll
 
 #### multipleChoice: Bool (default false)
 
-Set to `true` if the poll allows mutliple choices or not.
+Set to `true` if the poll allows multiple choices or not.
 
 > **Compatibility:** Requires `minimum_app_version` >= 1.3.
 
@@ -490,15 +611,15 @@ The `id` of an action (in the `items` section of [`actions.json`](#actionsjson))
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
-#### Voting
-
-To make a poll votable, give every [`PollOption`](#polloption) an `id` and set the poll's `action` to the id of an action in your `items` actions. (That action just needs to exist — you don't add it to `item.actions`; it's referenced only by the poll.) When the user picks option(s) and taps Vote, Tapestry calls your `performAction(actionId, item, value)` where **`value`** is the chosen option `id`, or a comma-joined list of `id`s for a multiple-choice poll. Find the poll on `item.attachments`, read whatever you stored in the poll's `metadata` (e.g. the service's poll id — the vote action gets the *item*, not the poll directly), submit the vote, then set the poll's `value` and return the updated `item`. Whether the poll stays votable afterward is up to you: on a service where a vote is final (e.g. Mastodon), also drop the poll's `action` so the Vote control disappears; on a service that allows changing a vote, leave `action` set and Tapestry keeps the control available with the recorded choice pre-selected.
-
-> **Compatibility:** Requires `minimum_app_version` >= 2.0.
-
 #### metadata: Dictionary
 
 A per-attachment `[String: String]` bag for the connector's own use, mirroring [`item.metadata`](#metadata-dictionary) — most useful across the compose/edit round-trip. See `MediaAttachment`'s `metadata`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
+#### Voting
+
+To make a poll votable, give every [`PollOption`](#polloption) an `id` and set the poll's `action` to the id of an action in your `items` actions. (That action just needs to exist — you don't add it to `item.actions`; it's referenced only by the poll.) When the user picks option(s) and taps Vote, Tapestry calls your `performAction(actionId, item, value)` where **`value`** is the chosen option `id`, or a comma-joined list of `id`s for a multiple-choice poll. Find the poll on `item.attachments`, read whatever you stored in the poll's `metadata` (e.g. the service's poll id — the vote action gets the *item*, not the poll directly), submit the vote, then set the poll's `value` and return the updated `item`. Whether the poll stays votable afterward is up to you: on a service where a vote is final (e.g. Mastodon), also drop the poll's `action` so the Vote control disappears; on a service that allows changing a vote, leave `action` set and Tapestry keeps the control available with the recorded choice pre-selected.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -787,12 +908,12 @@ draft.rules.media = {
   * **requiresAltText** — the media kinds whose alt text is **mandatory**: the user cannot submit while an attachment of one of these kinds has no description, with no bypass. Use it only for a service that genuinely rejects undescribed media. A kind listed here is treated as supporting alt text too, so you needn't repeat it in `supportsAltText`. Omitted/empty ⇒ alt text is optional (the app may still nudge the user, but they can post without it).
   * **altTextCharacterLimit** — a length cap on a media description, the same `{ maxLength?, maxBytes? }` shape as a [field's `characterLimit`](#rules--content-fields-and-character-counting), counted in the same [`characterUnit`](#rules--content-fields-and-character-counting). The editor shows a live remaining-count under the description field and blocks submit once any attachment's alt text is over — surfaced on that attachment's card so the user sees which one. It applies to every kind that carries alt text (not per-kind). Omitted ⇒ no limit. Not every service enforces one server-side (Bluesky's is just its client's courtesy ceiling over an unconstrained field; Mastodon reports a real cap in its instance config as `media_attachments.description_limit`).
   * **preferredFormats** — preference-ordered output formats per media kind, keyed like `limits` (any [kind name](#rules--attachments) is a valid key, including `image`). When the composer must transform a file the user picked — re-encoding to fit the service, or producing a silent animation when the user drops a video's audio — it uses these as the target format set, most-preferred first. A **suggestion, not a gate**: an input already in one of your listed formats is preserved untouched rather than needlessly transcoded, and an unlisted kind falls back to the transform's own canonical default. Values are the format names each transform accepts — e.g. `image: ["heic", "jpeg"]` (also `png`/`gif`), `video: ["mp4"]` (also `mov`), `animation: ["mp4", "gif"]` (also `mov`), `audio: ["m4a"]`.
-  * **limits** — hard per-kind ceilings, keyed by the **slot kind** the attachment fills (`video`, `animation`, `audio`), each an object of one or more axes:
+  * **limits** — hard per-kind ceilings, keyed by the **slot kind** the attachment fills (`video`, `animation`, `audio`), each an object of one or more properties:
       * **seconds** — max duration.
       * **frames** — max total frame count.
       * **fps** — max frame rate.
 
-    When the user picks a file that fills that slot and exceeds **any** axis you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. The key is the **slot** the attachment occupies, not the file's own intrinsic kind: an animation (a GIF or silent mp4) widened into a `video` slot is measured against `limits.video`. Specify only the axes the service enforces (an absent axis is unlimited); an absent kind has no limit. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
+    When the user picks a file that fills that slot and exceeds **any** limit you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. The key is the **slot** the attachment occupies, not the file's own intrinsic kind: an animation (a GIF or silent mp4) widened into a `video` slot is measured against `limits.video`. Specify only the limits the service enforces. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
 
 ##### rules — emoji shortcodes
 
@@ -847,6 +968,23 @@ Omitting `suggestions` (or leaving it empty) means no connector-driven autocompl
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
+### FileAsset
+
+Unlike the content types above — which a connector builds and returns — a `FileAsset` is an opaque host handle a connector *receives*: bytes held by the Tapestry app that never enter JavaScript, so even very large files are cheap to pass around. It has no `kind` and no factory. You send one with a request's `body:`, `multipart:`, or `base64:` options.
+
+A `FileAsset` reaches a connector two ways: as the response body of a request — **`fetch(url).file()`**, remote content kept on disk instead of read into JavaScript, enough to *proxy* media (download from one URL, upload to another) without the bytes passing through your connector — and as the user's **picked media** while composing, handed to your [`uploadAttachment`](#uploadattachment) function (or, in `"deferred"` upload mode, riding a draft's media attachment as its `file`; see [Composing → Media](#media)).
+
+  * mimeType: `String` — the container format (`"image/jpeg"`, `"video/mp4"`, …).
+  * byteSize: `Number`
+  * filename: `String` or `null`
+
+To learn a FileAsset's media **category** — `"image"`, `"animation"`, `"video"`, or `"audio"` — call the [`assetType()`](#assettype) function. It's deliberately a function rather than a property: answering it means reading the bytes, so it's asynchronous and never guessed from the file's name.
+
+> **Privacy.** Media the **user picks** is stripped of location and other identifying metadata (losslessly) *before* it is ever handed to your connector — you never receive the user's GPS coordinates. A file you obtain yourself with [`fetch(url).file()`](#reading-the-response) is treated as external content and is **not** stripped; use [`sharable()`](#sharable) if you want to strip such a file before re-hosting it.
+
+A FileAsset stays valid as long as you keep a reference to it (holding one across actions is fine).
+
+---
 ## Interface Functions
 
 The Tapestry app will call the following functions in `plugin.js` when it needs the script to read or write data. If no implementation is provided, no action will be performed. For example, some sources will not need to `verify()` themselves.
@@ -860,7 +998,7 @@ These functions are asynchronous (they may be declared `async` and/or return a P
 
 Determines if a site is reachable and gathers properties for the feed. Once verification succeeds a feed can be saved by a user.
 
-This function will only be called if `needs_verification` is set to true in the connectors’s configuration.
+This function will only be called if `needs_verification` is set to true in the connector’s configuration.
 
 The properties returned can be user visible or used internally. An example of the former case is a display name will be used identify the feed. The latter case is a base URL that will be used to handle relative paths in the feed.
 
@@ -904,94 +1042,18 @@ The array may also include *removals* if the connector can discover that content
 Tapestry calls this function when an action needs to be performed by the connector.
 
   * actionId: A `String` with the action id
-  * target: the subject of the action, which follows the [target it is defined under](#action-targets) — the `Item` the action was requested for (an `items` action), or a [`Draft`](#draft) for a `drafts` action. Handlers that only deal with items commonly name this parameter `item`, which is fine for that case.
-  * actionValue: A compatibility hook you can usually ignore. Data for an action lives in `item.metadata`; `actionValue` carries the value stored for this action on items created by a *pre-2.0* version of the connector (before `metadata` existed), letting a connector migrating from an older version fall back to it. It is an empty string for items created by a 2.0+ connector.
+  * target: the subject of the action, which follows the [target it is defined under](#action-targets) — the `Item` the action was requested for (an `items` action), or a [`Draft`](#draft) for a `drafts` action.
+  * actionValue: Some actions are passed an additional value depending on their calling context or for backward compatibility.
 
-Any data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed. After performing the action, return the result: the updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
+Most data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed and so most actions do not need an `actionValue`, however one notable exception is [Voting](#voting) in a poll.
+
+After performing the action, return the result that is expected based on the target and/or role: an updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
+
+An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer, and the composer's *submit* actions (in the [`drafts` target](#action-targets)) receive that `Draft`. See [Composing](#composing) for the full flow, including media.
 
 > **Note:** Only one action per feed is allowed to be running at a time.
 
-> **Compatibility:** When `minimum_app_version` < 2.0, the argument order is `performAction(actionId, actionValue, item)` and the result is reported via `actionComplete()` rather than returned. On >= 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as the compatibility hook described above.
-
-#### Composing
-
-An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer. The composer's *submit* actions are in the [`drafts` target](#action-targets), so for those `performAction`'s second argument is the edited `Draft` rather than an `Item`. A submit action then either:
-
-  * **succeeds** — returns the created `Item`(s), or nothing; the composer closes.
-  * **throws an `Error`** — reports a failure; the composer stays open with the draft intact and shows the error's [`userMessage`](#errors). Throwing is how a submit reports *anything* wrong — a validation problem the app couldn't catch, a server rejection, whatever — so the message you throw is the feedback the user sees.
-
-For example, a `reply` action opens a composer and a `send` action creates the post:
-
-```javascript
-async function performAction(actionId, target, actionValue) {
-    if (actionId == "reply") {
-        const item = target;   // the reply action's target is the item being replied to
-        const draft = Draft.create();
-        draft.header = "Reply to " + item.author.name;    // composer heading (not part of the post)
-        draft.body = item.author.username + " ";          // pre-fill the mention
-        draft.context = [item];
-        draft.metadata = { replyTo: item.metadata.id, idempotencyKey: crypto.randomUUID() };
-        draft.rules = {
-            fields: { body: {} },
-            attributes: [ { name: "language", type: "language" } ]   // offer a language picker
-        };
-        draft.actions.add("send");
-        return draft;
-    }
-    else if (actionId == "send") {
-        const draft = target;   // the send action's target is the Draft being submitted
-        const body = {
-            status: draft.body,
-            language: draft.attributeValues.language,     // the user's setting-attribute choice
-            in_reply_to_id: draft.metadata.replyTo
-        };
-        const headers = { "Idempotency-Key": draft.metadata.idempotencyKey };
-        const post = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
-        return [ Item.createWithUriDate(post.url, new Date(post.created_at)) /* …fill in the rest… */ ];
-    }
-}
-```
-
-See the section on `actions.json` for more information on how to define and perform actions.
-
-##### Media
-
-A draft's [`attachments`](#attachments-array-of-item-and-media) may also hold **media** the user picked — a `kind: "media"` object per attachment, of whichever kinds (`image`, `video`, `animation`, `audio`) your [attachment rules](#rules--attachments) allow. Your submit function turns each into the service's wire format. What an attachment carries — and how your submit function reads it — depends on the [`rules.media.upload`](#rules--media) mode you declared. A connector implements **one** mode, not both:
-
-  * **`"eager"`** (the default) — the app pre-uploaded each attachment during composing via your [`uploadAttachment`](#uploadattachment) function, so the attachment carries the **`metadata`** you returned (your service ref) — your submit function just references it. (It also still carries the uploaded `file`, in case you want it; normally you don't.)
-  * **`"deferred"`** — the app did not pre-upload, so the attachment carries its raw bytes as a **`file`** ([`FileAsset`](#fileasset)) and an empty `metadata` bag; your submit function uploads the bytes itself.
-
-The submit-time shape is the **same** either way — `file` + `metadata` — so the only thing the mode changes is whether `uploadAttachment` ran (which fills in the ref and swaps `file` to the transformed upload). You never have to *detect* the mode: you chose it.
-
-A submit function for the default eager mode reads the refs:
-
-```javascript
-else if (actionId == "send") {
-    const draft = target;
-    const mediaIds = [];
-    for (const attachment of draft.attachments.filter(a => a.kind === "media")) {
-        const id = attachment.metadata.id;   // the ref your uploadAttachment returned
-        // Apply the user's alt text / focus point HERE, at submit — NOT at upload: they stay editable after a
-        // pre-upload, so applying them earlier would capture stale values. (Mastodon: PUT /api/v1/media/:id.)
-        if (attachment.text != null || attachment.focalPoint != null) { await setMediaMetadata(id, attachment); }
-        mediaIds.push(id);
-    }
-    const post = await fetch.post(`${site}/api/v1/statuses`, { json: { status: draft.body, media_ids: mediaIds }, headers: { … } }).json();
-    return [ /* the created Item */ ];
-}
-```
-
-A `"deferred"` connector's submit function is the same shape, except each `id` comes from uploading the bytes right there — `const id = await uploadMedia(attachment.file)` — the very code an eager connector runs inside `uploadAttachment`. The alt-text / focus-point step is identical either way.
-
-A media attachment is the **same [`MediaAttachment`](#mediaattachment) object** documented above — one media shape everywhere. Composing just populates a few of its fields differently:
-
-  * **content** — an attachment the user added carries its bytes as a [`FileAsset`](#fileasset) in `file` (in `"eager"` mode this is the file your `uploadAttachment` produced; in `"deferred"` mode it's the original); an attachment that's already on the service — for example, media already on a post the user is editing — carries a `url` instead. So it's `file` **or** `url`, the one conditional field.
-  * **mediaType** — the kind the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`) — the same value [`uploadAttachment`](#uploadattachment) got as `attachedAs` (the app's cast target after any widening, not the file's intrinsic type — [`assetType()`](#assettype) reports that). Honor it when a service uploads kinds differently.
-  * **text** — the user's alt-text description (the same `text` field as on any media), present when the kind is in [`rules.media.supportsAltText`](#rules--media) and set.
-  * **focalPoint** — a `{x, y}` [focus point](#focalpoint-object), when supported and set.
-  * **metadata** — your service ref bag. It is **always present** (an empty `{}` when there's no ref yet), so don't read anything into whether the property exists — read the id/cid you stashed: if it's there (you uploaded the media via `uploadAttachment`, or it's already on the service because the user is editing a post), reference it; if the bag is empty, upload the `file`. Since you chose your upload mode, you already know which case applies.
-
-Before uploading raw bytes — in a deferred connector, or when re-hosting remote media — fit them to the service's limits with the transform for the attachment's kind — [`imageTransform`](#imagetransform), [`videoTransform`](#videotransform), [`animationTransform`](#animationtransform), or [`audioTransform`](#audiotransform) (each a pass-through when the input already fits) — and upload with a multipart `fetch` body (see [`fetch` Options](#options)). In eager mode that fitting happens inside `uploadAttachment`, so a deferred connector's `uploadMedia` is just that function's body run at submit time — the two modes share the same upload code, called at different times.
+> **Compatibility:** When `minimum_app_version` < 2.0, the argument order is `performAction(actionId, actionValue, item)` and the result is reported via `actionComplete()` rather than returned. On >= 2.0 the result is returned (or an `Error` thrown), and `actionValue` moved to the trailing position as described above.
 
 ---
 ### suggest
@@ -999,8 +1061,8 @@ Before uploading raw bytes — in a deferred connector, or when re-hosting remot
 `suggest(match) → Array of suggestions`
 
 Called as the user types an autocomplete token beginning with one of the markers declared in
-[`rules.suggestions`](#rules--suggestion-markers). Return the rows to offer; the composer shows them **verbatim** (in
-your order, with no further filtering) and, when the user picks one, replaces the typed token with that row's
+[`rules.suggestions`](#rules--suggestion-markers) while using the composer. Return the rows to offer; the composer shows them **verbatim** (in
+your order, with no further filtering) and, when the user picks one, it replaces the typed token with that row's
 `insertText`.
 
   * match: A `String` — the whole token as typed, marker included (`"@ali"`, `"#swi"`). A bare marker with no query yet (`"@"`) is passed too, so a connector can offer something for it (e.g. names already in the reply) or just return an empty array.
@@ -1027,7 +1089,7 @@ async function suggest(match) {
   * **detail** — an optional secondary line (a display name, a post count).
   * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
 
-`suggest()` is **best-effort** and fired on every keystroke, so it should return quickly. It does **not** need to guard its own errors: a thrown failure is logged by the host and simply shows no rows — it never interrupts composing. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
+`suggest()` is **best-effort** and fired on every (debounced) keystroke, so it must return quickly. It does **not** need to guard its own errors: a thrown failure is logged but doesn't interrupt the composing user. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -1036,14 +1098,14 @@ async function suggest(match) {
 
 `uploadAttachment(file, attachedAs) → UploadedAsset`
 
-Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.upload: "eager"`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing with progress, rather than blocking the Post button. (In `"deferred"` mode this function is never called; you upload inside your submit function instead — see [Composing → Media](#media).)
+Called to **pre-upload one media attachment** while the user is still composing, when you declare [`rules.media.upload: "eager"`](#rules--media) (the default). The app calls it as each attachment is picked, so the upload — and any transform — runs during composing rather than blocking the user. (In `"deferred"` mode this function is never called; you upload inside your submit function instead — see [Composing → Media](#media).)
 
-  * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) and to a `fetch` upload body.
-  * attachedAs: a `String` — the media type the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`): the resolved [kind name](#rules--attachments) after any widening (an animation widened into a `video` slot arrives as `"video"`). This is the app's cast target — what to *produce* — not the file's intrinsic type ([`assetType()`](#assettype) reports that). Branch on it to pick the transform/endpoint.
+  * file: a [`FileAsset`](#fileasset) — the picked bytes. The raw bytes never enter JavaScript; you pass the handle to [`imageTransform`](#imagetransform) or any of the other transform functions, then use `fetch` to upload it.
+  * attachedAs: a `String` — the media type the file was attached **as** (`"image"`/`"video"`/`"animation"`/`"audio"`): the resolved [kind name](#rules--attachments) after any widening (an animation widened into a `video` slot arrives as `"video"`). This is the app's intended type — what to *produce* — not the file's intrinsic type ([`assetType()`](#assettype) reports that). Branch on it to pick the transform/endpoint.
 
-Fit the bytes to the service, upload them, and return a **`UploadedAsset`** carrying the uploaded bytes plus your service ref. Throw an `Error` to report a failure — the app surfaces it and offers a retry.
+Fit the bytes to the service, upload them, and return a **`UploadedAsset`** carrying the uploaded bytes plus any metadata. Throw an `Error` to report a failure — the app surfaces it to the user and offers a retry.
 
-Do **not** apply the user's alt text or focus point here: they stay editable after this runs, so capturing them now would use stale values. They ride each attachment and are applied at submit ([Composing → Media](#media)).
+You **cannot** apply the user's alt text or focus point here since they are not supplied at this point as the user could still be editing them. That information rides each attachment object and is available to be applied at submit ([Composing → Media](#media)).
 
 ```javascript
 async function uploadAttachment(file, attachedAs) {
@@ -1053,14 +1115,16 @@ async function uploadAttachment(file, attachedAs) {
 }
 ```
 
-**`UploadedAsset.create(file, metadata)`** builds the return value: `file` is the uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
+**`UploadedAsset.create(file, metadata)`** builds the return value: `file` is the actual uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
+
+It's important to return the modified file to prevent accidental re-uploads and to support future capabilities like allowing the user to save drafts for later.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
 ## Utility Functions
 
-The following functions are available to the script to help it perform the actions listed above.
+The following functions are available to the script to help it do what it needs to do.
 
 ---
 ### fetch
@@ -1093,7 +1157,7 @@ Mistakes throw immediately with a `TypeError`: an unknown option name, more than
 
 #### Verb presets
 
-`fetch.get`, `fetch.post`, `fetch.put`, `fetch.patch`, `fetch.delete`, and `fetch.head` are `fetch` with the HTTP method filled in — the normal way to make a request. Each takes the same `(url, options)` as `fetch`, so a preset is just shorter than passing `method`:
+`fetch.get`, `fetch.conditional`, `fetch.post`, `fetch.put`, `fetch.patch`, `fetch.delete`, and `fetch.head` are just `fetch` with the HTTP method pre-filled in and are the preferred way to make a request. Each takes the same `(url, options)` as `fetch`, so a preset is just shorter than passing `method`:
 
 | Preset | Typical use |
 |---|---|
@@ -1118,20 +1182,6 @@ await fetch.post(`${site}/posts/favorites`, { form: { id } });
 ```
 
 (A `fetch.post` with no reader still **throws** on an error status — a write can't fail silently. To inspect a failing write's status yourself, add [`.response()`](#reading-the-response).)
-
-#### Authorization and the access token
-
-For security, the access token is **never exposed to connector JavaScript**. Tapestry attaches it for you:
-
-  * The **`Authorization` header** is added automatically to every request to an authorized endpoint (same host as the feed, over HTTPS). Its format comes from the connector's `authorization_header` template (default `Bearer __ACCESS_TOKEN__`) — see [Authorization](#plugin-configjson). This covers virtually every authenticated API.
-  * For the rare service that wants the token as a **form field in the body** instead (micro.blog's `/account/verify`), use [`authorizedField`](#fetch) — Tapestry fills a form field of that name with the token:
-
-    ```javascript
-    // POSTs body "token=<the access token>" — the connector never handles the token
-    await fetch.post(`${site}/account/verify`, { authorizedField: "token" });
-    ```
-
-Your own body and header content is otherwise sent **literally** — Tapestry does not scan it for placeholders, so user-composed text can never accidentally embed the token.
 
 #### Reading the response
 
@@ -1160,22 +1210,6 @@ However many readers you touch, only ONE request is sent — and the body can be
   * headers.get(name): `String` header value, case-insensitive, or `null`.
   * text() / json(): `Promise` for the decoded body / parsed JSON (async — the body isn't read until you ask). Text is decoded as UTF-8, falling back to the response's declared charset and then common 8-bit encodings, so a Latin-1 or Shift-JIS feed decodes correctly rather than as mojibake.
   * file(): the body as a [`FileAsset`](#fileasset).
-
-#### FileAsset
-
-An opaque handle to bytes held by the Tapestry app — the bytes themselves never enter JavaScript, so even very large files are cheap to pass around. You send one with the `body:`, `multipart:`, or `base64:` options.
-
-A `FileAsset` reaches a connector two ways: as the response body of a request — **`fetch(url).file()`**, remote content kept on disk instead of read into JavaScript, enough to *proxy* media (download from one URL, upload to another) without the bytes passing through your connector — and as the user's **picked media** while composing, handed to your [`uploadAttachment`](#uploadattachment) function (or, in `"deferred"` upload mode, riding a draft's media attachment as its `file`; see [Composing → Media](#media)).
-
-  * mimeType: `String` — the container format (`"image/jpeg"`, `"video/mp4"`, …).
-  * byteSize: `Number`
-  * filename: `String` or `null`
-
-To learn a FileAsset's media **category** — `"image"`, `"animation"`, `"video"`, or `"audio"` — call the [`assetType()`](#assettype) function. It's deliberately a function rather than a property: answering it means reading the bytes, so it's asynchronous and never guessed from the file's name.
-
-> **Privacy.** Media the **user picks** is stripped of location and other identifying metadata (losslessly) *before* it is ever handed to your connector — you never receive the user's GPS coordinates. A file you obtain yourself with [`fetch(url).file()`](#reading-the-response) is treated as external content and is **not** stripped; use [`sharable()`](#sharable) if you want to strip such a file before re-hosting it.
-
-A FileAsset stays valid as long as you keep a reference to it (holding one across actions is fine). In rare cases the operating system can reclaim the underlying temporary storage while the app is suspended — using the asset then throws an error with `name` `"FileUnavailableError"`, and the remedy is to fetch it again.
 
 #### Errors
 
@@ -1207,8 +1241,6 @@ A body that arrives but **can't be parsed** rejects too: `.json()` on a non-JSON
 
 > **Token refresh is automatic.** If a request comes back with the connector's `refresh_status_code` (default `401`) and the connector has credentials, Tapestry refreshes the token and retries the request **once** before you see anything. Your code observes a `401` only if the retry *also* fails — so you don't write refresh/retry logic yourself, and you don't normally catch `401`.
 
-> **Note:** `userMessage` works on YOUR errors too: set it on any `Error` your connector throws from `verify()`, `load()`, or `performAction()`, and Tapestry shows that text to the user in alerts while `message` goes to the log.
-
 #### EXAMPLE
 
 A Mastodon user's identity is determined by fetching the credential verification endpoint:
@@ -1224,7 +1256,19 @@ async function verify() {
 }
 ```
 
-> **Note:** The bearer token is attached automatically (see [Authorization and the access token](#authorization-and-the-access-token)); a service that wants the token in the body uses [`authorizedField`](#fetch).
+#### Authorization and the access token
+
+For security, the access token is **never exposed to connector JavaScript**. Tapestry attaches it for you:
+
+  * The **`Authorization` header** is added automatically to every request to an authorized endpoint (same host as the feed, over HTTPS). Its format comes from the connector's `authorization_header` template (default `Bearer __ACCESS_TOKEN__`) — see [Authorization](#plugin-configjson). This covers virtually every authenticated API.
+  * For the rare service that wants the token as a **form field in the body** instead (micro.blog's `/account/verify`), use [`authorizedField`](#fetch) — Tapestry fills a form field of that name with the token:
+
+    ```javascript
+    // POSTs body "token=<the access token>" — the connector never handles the token
+    await fetch.post(`${site}/account/verify`, { authorizedField: "token" });
+    ```
+
+Your own body and header content is otherwise sent **literally** — Tapestry does not scan it for placeholders, so user-composed text can never accidentally embed the token.
 
 #### fetch.conditional
 
@@ -1912,7 +1956,7 @@ Recommended properties:
   
   	- If not provided, the user will be prompted for a URL during setup. If you are accessing an API with a single endpoint, please provide a value. In cases where each instance of the source will need its own site, for example a Mastodon instance or an RSS feed, do not provide a value and let the user set it up.
   	- The value will also be used as a base URL for relative authentication URLs (see the _NOTE_ below).
-  	- The configured value or a value provided by the user will be provided as as JavaScript variable.
+  	- The configured value or a value provided by the user will be provided as a JavaScript variable.
   	- The configured value or a value provided by the user will be used to control when Tapestry sends an "Authorization" HTTP header. If the request's scheme is "https" on the default port (443) and the same domain or subdomain of `site`, the header will be included. 
 
   * site\_prompt: `String` with a prompt for user input.
@@ -2036,7 +2080,7 @@ If no `prompt` is specified, the capitalized name of the variable is used. If no
 
 A variable with the type `switch` will present a switch in the configuration interface and sets a value of "on" or "off" (the default value). A `choices` type uses a popup menu with the strings in a comma separated list, with the default being the first item in the list.
 
-Multiple inputs with the same name will result in undefined behavior. It won’t act predicably in the configuration interface or `plugin.js`.
+Multiple inputs with the same name will result in undefined behavior. It won’t act predictably in the configuration interface or `plugin.js`.
 
 These variables, and the changes that each user makes to them, are persisted by Tapestry. If the configuration of the inputs changes, existing values will be maintained and any new variables will get a default value. Variables that are removed from the configuration will also be removed from the user's persisted values.
 
@@ -2355,7 +2399,7 @@ The sites category is a list of strings where the connector can be used. These c
 For example. the `com.example` connector only works on one site so it uses:
 
 ```json
-	"site": [
+	"sites": [
 		"example.com"
 	],
 ```
@@ -2363,7 +2407,7 @@ For example. the `com.example` connector only works on one site so it uses:
 The YouTube connector will work on many different domains. Note that "youtube." will match "youtube.de", "youtube.fr", as well as the more familiar "youtube.com". The match does not use regular expressions.
 
 ```json
- 	"site": [
+ 	"sites": [
  		"youtube.",
  		"youtu.be",
  		"youtubekids.com"
@@ -2661,7 +2705,7 @@ This example extracts a value from the TXT record content using a capture group:
 ---
 ### actions.json
 
-This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `name` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below) and is **optional** but highly enocouraged. There are a few fallback icons based on an action's `role`, but most will get a generic placeholder so setting something explicit is a good idea.
+This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `name` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below) and is **optional** but highly encouraged. There are a few fallback icons based on an action's `role`, but most will get a generic placeholder so setting something explicit is a good idea.
 
 As of Tapestry 1.4, actions can also have an optional `role` that further determines where the action is rendered in the UI, assumptions about the action's return values, and how it is expected to behave. (See roles listed below.)
 
@@ -2877,7 +2921,7 @@ Some HTML tags won’t appear in the preview. Things like `<table>`, `<ul>`, or 
 
 ### HTML Preview Tags
 
-In the first case, speed is of the essence. Timeline scrolling peformance can only be achieved with a subset of HTML that is converted to formatted text. In this context, think of your content text more like Markdown formatting than full HTML formatting.
+In the first case, speed is of the essence. Timeline scrolling performance can only be achieved with a subset of HTML that is converted to formatted text. In this context, think of your content text more like Markdown formatting than full HTML formatting.
 
 The following tags are supported:
 
@@ -2924,16 +2968,5 @@ If the `<img>` tag includes an `alt` attribute, that text will be included in th
 
 A `LinkAttachment` can also be created automatically. Tapestry will check the first link in the first paragraph and show the preview card in the timeline if the link contains Open Graph information.
 
-<table>
-	<tr>
-		<th>State</th>
-		<th>Behavior</th>
-	</tr>
-	<tr>
-		<td>True</td>
-		<td>Good</td>
-	</tr>
-</table>
-	
 This behavior can be disabled with `"provides_attachments": true` in `plugin-config.json`. The Mastodon connector is an example of where this is used because its API provides attachments directly in the payload.
 
