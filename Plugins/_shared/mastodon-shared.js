@@ -362,6 +362,16 @@ function supportsQuotePosts(instance) {
     return (instance?.api_versions?.mastodon ?? 0) >= 7;
 }
 
+// Whether media and a poll can coexist on one post. Mastodon dropped the server-side exclusivity in 4.6.0
+// (PR #39203); older instances still reject the pairing, so gate the combined slot on the instance's major.minor
+// — parsed from the leading digits of `version` ("4.6.3", "4.6.0-nightly.x", …) so 4.6 pre-releases match too.
+function supportsMediaWithPoll(instance) {
+    const match = /^(\d+)\.(\d+)/.exec(instance?.version ?? "");
+    if (match == null) { return false; }
+    const major = +match[1], minor = +match[2];
+    return major > 4 || (major == 4 && minor >= 6);
+}
+
 // Build a fresh compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata);
 // `newPost` starts blank. Both mint an idempotency key up front and submit through the same `send` verb.
 async function composeDraft(actionId, target, id) {
@@ -382,6 +392,23 @@ async function composeDraft(actionId, target, id) {
     // Alt-text length cap the server enforces, straight from the instance's config. Newer Mastodon reports 10000
     // (raised from 1500) — instances that don't report it are the older 1500-cap builds, so that's the fallback.
     const altTextLimit = { maxLength: instance?.configuration?.media_attachments?.description_limit ?? 1500 };
+    // Poll shape from the instance's config (defaults cover a failed fetch / older builds). The duration presets are
+    // the conventional client menu, filtered to the instance's allowed [min, max] expiration so we never offer one the
+    // server would reject; the same window backs a free custom end-date pick.
+    const pollCfg = instance?.configuration?.polls;
+    const pollMinExpiration = pollCfg?.min_expiration ?? 300;         // 5 minutes
+    const pollMaxExpiration = pollCfg?.max_expiration ?? 2592000;     // ~30 days
+    // The FIRST preset is the app's default length, so 1 day (Mastodon's own default) leads; the rest follow
+    // chronologically (the app re-sorts by length for display). Filtered to the instance's allowed [min, max]. The
+    // custom end-date mode inherits this same 1-day default (it declares no `default` of its own).
+    const pollPresets = [
+        { label: "1 day", seconds: 86400 },
+        { label: "5 minutes", seconds: 300 }, { label: "30 minutes", seconds: 1800 },
+        { label: "1 hour", seconds: 3600 }, { label: "6 hours", seconds: 21600 },
+        { label: "3 days", seconds: 259200 }, { label: "7 days", seconds: 604800 },
+    ].filter(preset => preset.seconds >= pollMinExpiration && preset.seconds <= pollMaxExpiration);
+    // media + poll on one post only from 4.6 (see supportsMediaWithPoll); older instances keep them exclusive.
+    const mediaPollCombos = supportsMediaWithPoll(instance) ? [["media", "poll"]] : [["media"], ["poll"]];
     draft.rules = {
         characterUnit: "graphemes",
         // The main counter's limit (default 500) spans the body AND the content warning — both count against it.
@@ -407,16 +434,22 @@ async function composeDraft(actionId, target, id) {
         // `@` and `#` autocomplete via suggest() (account/hashtag search); `:` emoji is served by `shortcodes` above.
         suggestions: ["@", "#"],
         // Mastodon's real media rules: up to 4 images and animations MIXED (a shared budget of 4), OR one video alone,
-        // OR one audio alone — three mutually exclusive options of the one media slot. A quote (when the instance
-        // supports it) is its own combination, postable but never mixed with media.
+        // OR one audio alone — three mutually exclusive options of the one media slot. A poll shares the media
+        // combination on 4.6+ (or stands alone on older instances); a quote (when supported) is always its own.
         attachments: {
             slots: {
                 media: [{ allow: ["image", "animation"], max: 4 }, { allow: ["video"] }, { allow: ["audio"] }],
+                poll: [{ allow: ["poll"] }],
                 ...(canQuote ? { quote: [{ allow: ["item"] }] } : {})
             },
-            combinations: canQuote ? [["media"], ["quote"]] : [["media"]]
+            combinations: canQuote ? [...mediaPollCombos, ["quote"]] : mediaPollCombos
         },
-        media: { upload: "eager", supportsAltText: ["image", "animation", "video", "audio"], supportsFocusPoint: ["image", "animation"], altTextCharacterLimit: altTextLimit, limits: { video: videoLimit, animation: videoLimit } }
+        media: { upload: "eager", supportsAltText: ["image", "animation", "video", "audio"], supportsFocusPoint: ["image", "animation"], altTextCharacterLimit: altTextLimit, limits: { video: videoLimit, animation: videoLimit } },
+        poll: {
+            options: { min: 2, max: pollCfg?.max_options ?? 4, characterLimit: { maxLength: pollCfg?.max_characters_per_option ?? 50 } },
+            supportsMultipleChoice: true,   // Mastodon always allows it — no instance gate
+            duration: { endDate: { min: pollMinExpiration, max: pollMaxExpiration }, presets: pollPresets }
+        }
     };
 
     if (actionId == "reply") {
@@ -733,6 +766,24 @@ async function performAction(actionId, target, actionValue) {
             mediaIds.push(id);
         }
 
+        // A poll rides in the draft attachments as the same {kind:"poll"} object the read side emits. Its length is
+        // either a chosen preset `duration` (seconds) or a custom `endDate` we convert to seconds-from-now; options
+        // are the non-empty titles in order (blank/duplicate options are the server's to reject, not ours to strip
+        // beyond emptiness). Media + poll coexist only on 4.6+, but the compose rules already gate that pairing.
+        const pollAttachment = (draft.attachments ?? []).find(a => a.kind == "poll");
+        let poll = undefined;
+        if (pollAttachment != null) {
+            let expiresIn = pollAttachment.duration;
+            if (expiresIn == null && pollAttachment.endDate != null) {
+                expiresIn = Math.round((new Date(pollAttachment.endDate).getTime() - Date.now()) / 1000);
+            }
+            poll = {
+                options: pollAttachment.options.map(option => option.title).filter(title => title.length > 0),
+                expires_in: expiresIn,
+                multiple: pollAttachment.multipleChoice === true,
+            };
+        }
+
         const body = {
             status: draft.body,
             in_reply_to_id: draft.metadata?.replyTo,
@@ -740,6 +791,7 @@ async function performAction(actionId, target, actionValue) {
             visibility: visibility,
             language: attributes.language,
             media_ids: mediaIds.length > 0 ? mediaIds : undefined,
+            poll: poll,
             spoiler_text: hasContentWarning ? contentWarning : undefined,
             sensitive: hasContentWarning ? true : undefined,
             // The server ignores the quote policy for followers-only/direct posts, so only send it when it applies.
