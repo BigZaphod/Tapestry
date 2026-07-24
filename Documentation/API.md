@@ -197,6 +197,25 @@ Composing populates a few of the media attachment's fields differently:
 
 Before uploading a file, fit it to the service's limits with the correct transform function based on the intended attachment type. There are several transform functions for different types of media: [`imageTransform`](#imagetransform), [`videoTransform`](#videotransform), [`animationTransform`](#animationtransform), or [`audioTransform`](#audiotransform). In eager mode, you call these functions in `uploadAttachment` based on the given `attachedAs` type. In deferred mode, you do this work in your submit function based on each attachment's `mediaType` property. Be sure to use the correctly-typed transformation function before you upload or else your uploaded media file might not be what you expected!
 
+#### Polls
+
+If your service supports it, allow a `poll` slot in [`rules.attachments`](#rules--attachments) and declare its shape in [`rules.poll`](#rules--poll); the composer then offers a poll editor. At submit, the poll rides in [`draft.attachments`](#attachments-array-of-item-and-media) as a `kind: "poll"` object — the **same [`PollAttachment`](#pollattachment) shape** the read side emits, now carrying the length the user chose: a preset choice sets [`duration`](#duration-number-optional) (seconds), a custom end date sets [`endDate`](#enddate-date-optional). Your submit function reads it and builds the service's create request:
+
+```javascript
+const poll = (draft.attachments ?? []).find(a => a.kind === "poll");
+if (poll != null) {
+  // Prefer duration over endDate — an edit-mode poll may carry both (a fresh duration alongside a stale endDate):
+  let expiresIn = poll.duration;
+  if (expiresIn == null && poll.endDate != null) {
+    expiresIn = Math.round((new Date(poll.endDate).getTime() - Date.now()) / 1000);
+  }
+  // poll.options[].title are the user's options in order; poll.multipleChoice is the single/multiple selection.
+  // Send those plus expiresIn however the service's create API wants.
+}
+```
+
+The `options` array holds only the options the user actually filled in, in order — the composer drops the empty trailing slots for you. It does **not** dedupe or trim whitespace-only options (they're content the user typed); let the service reject those on submit, as its own web composer would. If you offered no `duration` control, both `duration` and `endDate` are unset — the length is the service's to decide.
+
 ---
 ## Variables
 
@@ -587,6 +606,12 @@ An array of `PollOption` objects for each option in the poll.
 
 An optional date that the poll ends. If not specified, Tapestry renders the poll without showing a countdown time label.
 
+#### duration: Number (optional)
+
+The poll's length in **seconds**, when it's known as a duration rather than an absolute end. This is where a poll being **composed** carries the user's chosen *length* (a fixed preset choice — see [Composing → Polls](#polls)); your submit function converts it to whatever the create API wants. A read-side poll may set it too if the service reports a duration. When a poll carries **both** `duration` and `endDate`, `duration` is authoritative — Tapestry, and your connector, should prefer it (an edit-mode poll may arrive with a fresh `duration` alongside a stale `endDate`); the composer never lets both go out for a poll the user built.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.0.
+
 #### multipleChoice: Bool (default false)
 
 Set to `true` if the poll allows multiple choices or not.
@@ -684,11 +709,11 @@ Posts to display above the composer for context — for a reply, the post being 
 
 #### attachments: Array of Item and Media
 
-Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). Two kinds ride here: an [`Item`](#item) is a **quote**, and a `kind: "media"` object is a user-picked **media** attachment (see [Composing → Media](#media)). To quote, put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
+Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). Three kinds ride here: an [`Item`](#item) is a **quote**, a `kind: "media"` object is a user-picked **media** attachment (see [Composing → Media](#media)), and a `kind: "poll"` object is a **poll** the user built (see [Composing → Polls](#polls)). To quote, put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
 
 `attachments` is for **display** — the composer renders the embedded `Item` as a quote preview. To *build* the quote at submit, don't dig the reference back out of the attachment: when you build the draft (you already have the item in hand), stash the identifiers you need in the draft's own [`metadata`](#metadata-dictionary-1) — exactly as you carry a reply's references there. Same split as `context` vs. the reply refs: the post to *show* rides `attachments`, the reference you *post with* rides `metadata`.
 
-Beyond a quote (a single embedded post), the array holds any **media** attachments the user picked — each a `kind: "media"` object, read at submit ([Composing → Media](#media)). It can carry several as the connector's [attachment rules](#rules--attachments) allow (multiple media, or media alongside a quote); a poll attachment is a later addition.
+Beyond a quote (a single embedded post), the array holds any **media** attachments the user picked — each a `kind: "media"` object, read at submit ([Composing → Media](#media)) — and a **poll** the user built, a `kind: "poll"` object ([Composing → Polls](#polls)). It can carry several as the connector's [attachment rules](#rules--attachments) allow (multiple media, a poll alongside media, or media alongside a quote).
 
 #### metadata: Dictionary
 
@@ -882,9 +907,8 @@ pastes a URL, the app detects it (bare domains included) and attaches a card, us
 end-to-end link-card flow.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0. These rules parse and round-trip for every type. The
-> composer offers a picker for `link`, `item` (quote), and `image` media (with alt text and focus point via
-> [`rules.media`](#rules--media)). Declaring `animation`, `video`, `audio`, or `poll` parses without error, but the
-> composer does not present a picker for those types.
+> composer presents `link`, `item` (quote), `image`/`animation`/`video`/`audio` media (with alt text and focus point
+> as [`rules.media`](#rules--media) allows), and `poll` (its editor driven by [`rules.poll`](#rules--poll)).
 
 ##### rules — media
 
@@ -914,6 +938,38 @@ draft.rules.media = {
       * **fps** — max frame rate.
 
     When the user picks a file that fills that slot and exceeds **any** limit you specify, the composer **declines it and tells the user** — it is never silently trimmed or downsampled — so an over-limit file never reaches your upload function. The key is the **slot** the attachment occupies, not the file's own intrinsic kind: an animation (a GIF or silent mp4) widened into a `video` slot is measured against `limits.video`. Specify only the limits the service enforces. `frames` and `fps` are separate because they don't compose — a service that caps fps at 120 **and** frames at 36,000 rejects a 500 s × 120 fps clip (60,000 frames) even though it's within the fps cap.
+
+##### rules — poll
+
+`rules.poll` declares the shape of a **poll** the composer offers — how many options, how long each may be, whether multiple choice is allowed, and how the user sets the poll's length. Declare it alongside a `poll` slot in [`rules.attachments`](#rules--attachments). Every key is optional; a `poll` slot offered *without* `rules.poll` still works on these defaults (2+ single-choice options, no per-option limit, an indefinite length). It's all policy your connector reads off its service (e.g. Mastodon's instance `configuration.polls`); the app enforces only these **numeric** limits and leaves content questions (duplicate or blank options) to the service to reject.
+
+```js
+draft.rules.poll = {
+  options: {
+    min: 2,                                 // fewest options; default 2
+    max: 4,                                 // most options; omit ⇒ no upper limit
+    characterLimit: { maxLength: 50 }       // per-option length; omit ⇒ no limit
+  },
+  supportsMultipleChoice: true,             // may the user allow selecting multiple? default false
+  duration: {                               // how the length is set; omit ⇒ the service fixes it (no control shown)
+    presets: [                              // a fixed menu; the FIRST is the default, the app sorts by length to display
+      { label: "1 day",     seconds: 86400 },
+      { label: "5 minutes", seconds: 300    },
+      { label: "7 days",    seconds: 604800 }
+    ],
+    endDate: { min: 300, max: 2592000, default: 86400 }   // OR a free custom end date within [min, max]
+  }
+};
+```
+
+  * **options** — the answer set. `min` (default 2) and `max` (omit ⇒ unbounded) bound how many options the user must and may enter; `characterLimit` is a per-option length cap, the same `{ maxLength?, maxBytes? }` shape as a [field's `characterLimit`](#rules--content-fields-and-character-counting), counted in the same [`characterUnit`](#rules--content-fields-and-character-counting) (omit ⇒ no limit). The composer enforces the count and per-option length; it does **not** police duplicate or whitespace-only options — those vary per service, so they're the server's to reject.
+  * **supportsMultipleChoice** — whether the editor offers a single-vs-multiple-choice control. Omitted ⇒ single choice only.
+  * **duration** — how the user sets the poll's length. Both parts are optional:
+      * **presets** — a fixed menu of lengths, each `{ label, seconds }`. Choosing one sets the poll's [`duration`](#duration-number-optional). **The first preset is the default** a fresh poll seeds to, so order them default-first (not chronologically) — the app re-sorts by length for display.
+      * **endDate** — a free **custom end date** the user picks within `{ min, max?, default? }` seconds-from-now (`max` optional ⇒ unbounded). Choosing it sets the poll's [`endDate`](#enddate-date-optional). `default` is the length a fresh custom pick seeds to; omit it and it inherits the first preset's length, else `min`.
+      * Declare **both** and the menu gains a "Custom…" entry that reveals the date picker. Omit `duration` entirely (or leave it empty) and the composer shows **no length control** — the poll goes out carrying neither `duration` nor `endDate`, and the service decides the length.
+
+    Read the finished poll back at submit — see [Composing → Polls](#polls).
 
 ##### rules — emoji shortcodes
 
