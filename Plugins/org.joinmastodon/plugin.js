@@ -45,6 +45,19 @@ async function load() {
     // this is a no-op fetch after the first.
     quoteCapable = supportsQuotePosts(await getInstance());
 
+    // Ensure userId BEFORE any section builds items, not lazily in the statuses section: postForItem gates the
+    // own-post actions (edit/delete) on it, and the sections run concurrently — home items built while a wiped
+    // userId was still being re-fetched would import without those actions. Storage is wiped by the app's
+    // Clear Cache (it removes the feed's whole key/value domain), so this isn't a once-ever situation — and the
+    // clear can happen under a RUNNING context, so re-read storage here rather than trusting the module var
+    // (postForItem reads storage fresh; a stale var would skip the ensure and strand every item without the
+    // own-post actions until relaunch).
+    userId = getItem("userId");
+    if (userId == null) {
+        userId = (await fetch(site + "/api/v1/accounts/verify_credentials").json())["id"];
+        setItem("userId", userId);
+    }
+
     // NOTE: The home timeline will be filled up to the endDate, if possible.
     let endDate = null;
     let endDateTimestamp = getItem("endDateTimestamp");
@@ -54,7 +67,7 @@ async function load() {
 
     // The three sections are independent, so run them concurrently — each delivers its items via
     // processResults() as it finishes. (Within a section, ordering-dependent work — followed tags before the
-    // home query, the userId lookup before statuses, home pagination — stays sequential.)
+    // home query, home pagination — stays sequential.)
     const tasks = [];
 
     if (includeHome == "on") {
@@ -84,11 +97,6 @@ async function load() {
     if (includeStatuses == "on") {
         tasks.push((async () => {
             console.log(`==== STATUSES START`);
-            if (userId == null) {
-                const jsonObject = await fetch(site + "/api/v1/accounts/verify_credentials").json();
-                userId = jsonObject["id"];
-                setItem("userId", userId);
-            }
             const results = await queryStatusesForUser(userId);
             console.log(`==== STATUSES END results = ${results.length}`);
             processResults(results);

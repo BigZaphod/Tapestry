@@ -57,6 +57,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Media attachments.** A post can carry the media the user picks. The connector declares [`draft.rules.media`](#rules--media) (the upload mode, which kinds support alt text / a focus point, and any hard `limits`) and — in the default `"eager"` mode — implements the [`uploadAttachment()`](#uploadattachment) function, returning a [`UploadedAsset`](#uploadattachment); the submit function then reads the media off [`draft.attachments`](#media). A family of host functions works the picked (and *remote*, such as a fetched link-card thumbnail) media: [`assetType()`](#assettype) classifies a [`FileAsset`](#fileasset) by its bytes; the per-kind transforms [`imageTransform()`](#imagetransform) / [`videoTransform()`](#videotransform) / [`animationTransform()`](#animationtransform) / [`audioTransform()`](#audiotransform) fit it to a service's formats and size limits; the matching [`imageInfo`, `videoInfo`, `animationInfo`, `audioInfo`](#imageinfo-videoinfo-animationinfo-audioinfo) read its dimensions and duration; and [`sharable()`](#sharable) strips identifying metadata. User-picked media arrives already stripped of location metadata, losslessly.
 
+**`mediaType` replaces `mimeType` on media attachments.** A media attachment's kind — `"image"`, `"animation"`, `"video"`, or `"audio"` — is declared with [`mediaType`](#mediatype-string). Most media needs no declaration: the URL's extension classifies it, and image bytes are sniffed further (a GIF or APNG animates on its own). Declare it when the URL misleads about the kind — a `.m3u8` playlist containing video, a video or audio URL with a bad or missing extension — because Tapestry picks the player-vs-image pipeline before any bytes arrive. The old `mimeType` property is retired and, unlike the removed functions above, **silently ignored** (a plain property assignment has nothing to fail), so replace any `attachment.mimeType = …` when upgrading.
+
 **Expanded JavaScript environment** with support for the following common web APIs: [`crypto.randomUUID()`](#cryptorandomuuid) (random UUIDs, e.g. for idempotency keys), [`TextEncoder`/`TextDecoder`](#textencoder-and-textdecoder) (UTF-8 ↔ bytes, e.g. for byte offsets), and [`btoa`/`atob`](#btoa-and-atob) (base64) — plus [`sleep`](#sleep) / [`poll`](#poll) for awaiting asynchronous server work (e.g. media that keeps processing after upload).
 
 Connectors that do **not** set `minimum_app_version` to 2.0 or later keep all pre-2.0 behavior unchanged — including the old completion functions and `sendRequest()`/`sendConditionalRequest()` — and do not get `fetch()` or the new JavaScript environment functions.
@@ -439,7 +441,7 @@ A URI with more information about the annotation. For things like boosts/reposts
 
 ```javascript
 const attachment = MediaAttachment.createWithUrl(url);
-attachment.mimeType = "image/gif";
+attachment.mediaType = "image";
 attachment.text = "Yet another cat on the Internet.";
 attachment.aspectSize = {width: 300, height: 400};
 attachment.focalPoint = {x: 0, y: 0};
@@ -474,7 +476,7 @@ The supported file formats and extensions for audio and video are:
   * Unix Audio - .au
   * 3GPP Container - .3gp, .3g2
 
-An HLS playlist (.m3u8) should be specified explicitly as "video" or "audio" since Tapestry has no mechanism to examine the contents of the playlist.
+An HLS playlist (.m3u8) should be declared explicitly (`mediaType` of `"video"` or `"audio"`; pre-2.0, a `mimeType`) since Tapestry has no mechanism to examine the contents of the playlist.
 
 #### url: String (required for timeline media)
 
@@ -494,17 +496,19 @@ A string containing the URL for a lower resolution copy of the media. This is as
 
 #### mimeType: String
 
+> **Legacy — pre-2.0 connectors only.** From `minimum_app_version` 2.0 this property is retired and ignored: declare the media's kind with [`mediaType`](#mediatype-string) instead, and Tapestry resolves the specific format from the URL or the bytes.
+
 A string that lets Tapestry know what kind of media is being attached. Currently supported types are "image", "video", and "audio". A subtype, such as "jpeg", "png", or "gif" can be supplied, but does not affect how the media is displayed.
 
 If this value isn't provided, the file name extension for `url` will be used. If there is no file extension, "image" will be assumed.
 
 Note that playlists, such as .m3u8, will be assumed to be audio (based upon the file extension). If the playlist contains video, set the `mimeType` explicitly to "video/mp4".
 
-*(Timeline media only — not set on a `draft`'s media; a connector determines the format itself when it uploads.)*
-
 #### mediaType: String
 
-The media's behavior category — one of `"image"`, `"video"`, `"animation"`, or `"audio"` — the same taxonomy used across composing (see [`attachedAs`](#uploadattachment) and the attachment [rules](#rules--attachments)). It is *distinct* from `mimeType` and the two coexist: a GIF is `mimeType: "image/gif"` but `mediaType: "animation"`. On a composed attachment it's the kind the file was attached *as*; on a timeline attachment it's optional — Tapestry derives a category from `mimeType`/`url` when it's absent.
+The media's kind — one of `"image"`, `"video"`, `"animation"`, or `"audio"` — the same taxonomy used across composing (see [`attachedAs`](#uploadattachment) and the attachment [rules](#rules--attachments)).
+
+On a timeline attachment it's optional: Tapestry classifies by the URL's extension when it's absent, so a plain .jpg or .mp3 needs nothing, and image bytes are sniffed beyond that (a GIF or APNG animates on its own; an image with a bad extension still lands in the image pipeline, which is the fallback). Declare it when the extension would mislead about the kind — an HLS playlist (.m3u8) that contains video, a video or audio URL with a bad or missing extension — since the rendering pipeline (player vs. image) is chosen before the media is fetched. On a composed attachment it's the kind the file was attached *as*. Media Tapestry hands **to** you — an item's attachments in `performAction`, a draft's at submit — always carries it.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 

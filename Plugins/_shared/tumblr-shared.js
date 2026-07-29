@@ -543,7 +543,7 @@ function processContentBlocks(contentBlocks, contentLayouts) {
                 if (contentBlock.alt_text != null) {
                     attachment.text = contentBlock.alt_text;
                 }
-                attachment.mimeType = mediaProperties.type;
+                attachment.mediaType = "image";
                 attachment.aspectSize = {width: mediaProperties.width, height: mediaProperties.height};
                 if (posterProperties != null) {
                     attachment.thumbnail = posterProperties.url;
@@ -584,7 +584,7 @@ function processContentBlocks(contentBlocks, contentLayouts) {
                 if (contentBlock.title != null) {
                     attachment.text = contentBlock.title;
                 }
-                attachment.mimeType = mediaProperties.type;
+                attachment.mediaType = "audio";
                 attachment.aspectSize = {width: mediaProperties.width, height: mediaProperties.height};
                 if (posterProperties != null && posterProperties.length > 0) {
                     attachment.thumbnail = posterProperties[0].url;
@@ -604,7 +604,7 @@ function processContentBlocks(contentBlocks, contentLayouts) {
                 const posterProperties = contentBlock.poster;
 				
                 const attachment = MediaAttachment.createWithUrl(mediaProperties.url);
-                attachment.mimeType = mediaProperties.type;
+                attachment.mediaType = "video";
                 attachment.aspectSize = {width: mediaProperties.width, height: mediaProperties.height};
                 if (posterProperties != null && posterProperties.length > 0) {
                     attachment.thumbnail = posterProperties[0].url;

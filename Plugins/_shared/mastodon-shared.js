@@ -154,6 +154,7 @@ function postForItem(item) {
     const myUserId = getItem("userId");
     if (myUserId != null && account?.id == myUserId) {
         post.actions.add("delete");
+        post.actions.add("edit");
     }
 
     let attachments = [];
@@ -161,61 +162,7 @@ function postForItem(item) {
     const mediaAttachments = item["media_attachments"];
     if (mediaAttachments != null && mediaAttachments.length > 0) {
         for (const mediaAttachment of mediaAttachments) {
-            const media = mediaAttachment["url"]
-            const attachment = MediaAttachment.createWithUrl(media);
-            if (mediaAttachment["preview_url"] != null) {
-                attachment.thumbnail = mediaAttachment["preview_url"];
-            }
-            if (mediaAttachment["description"] != null) {
-                attachment.text = mediaAttachment["description"];
-            }
-            if (mediaAttachment["blurhash"] != null) {
-                attachment.blurhash = mediaAttachment["blurhash"];
-            }
-            if (mediaAttachment["meta"] != null) {
-                const metadata = mediaAttachment["meta"];
-                if (metadata["focus"] != null) {
-                    const focus = metadata["focus"];
-                    if (focus["x"] != null && focus["y"] != null) {
-                        attachment.focalPoint = {x : focus["x"], y: focus["y"]};
-                    }
-                }
-                if (metadata["original"] != null) {
-                    const original = metadata["original"];
-                    if (original["width"] != null && original["height"] != null) {
-                        attachment.aspectSize = {width : original["width"], height: original["height"]};
-                    }
-                }
-            }
-            let mimeType = "application/octet-stream";
-            const mediaType = mediaAttachment["type"];
-            if (mediaType == "video" || mediaType == "gifv") {
-                mimeType = "video/mp4";
-            }
-            else if (mediaType == "audio") {
-                if (media.endsWith(".aac")) {
-                    mimeType = "audio/aac";
-                }
-                else if (media.endsWith(".mp3")) {
-                    mimeType = "audio/mpeg";
-                }
-                else {
-                    mimeType = "audio/*";
-                }
-            }
-            else if (mediaType == "image") {
-                if (media.endsWith(".png")) {
-                    mimeType = "image/png";
-                }
-                else if (media.endsWith(".jpg") || media.endsWith(".jpeg")) {
-                    mimeType = "image/jpeg";
-                }
-                else {
-                    mimeType = "image/*";
-                }
-            }
-            attachment.mimeType = mimeType;
-            attachments.push(attachment);
+            attachments.push(attachmentForMedia(mediaAttachment));
         }
     }
 
@@ -271,6 +218,44 @@ function postForItem(item) {
     post.attachments = attachments;
 
     return post;
+}
+
+// One status media_attachment → a media attachment object (url, thumbnail, alt text, blurhash, focus, size, MIME).
+// Shared by the read side (postForItem) and the edit seed, which layers the compose-only fields on top.
+function attachmentForMedia(mediaAttachment) {
+    const attachment = MediaAttachment.createWithUrl(mediaAttachment["url"]);
+    if (mediaAttachment["preview_url"] != null) {
+        attachment.thumbnail = mediaAttachment["preview_url"];
+    }
+    if (mediaAttachment["description"] != null) {
+        attachment.text = mediaAttachment["description"];
+    }
+    if (mediaAttachment["blurhash"] != null) {
+        attachment.blurhash = mediaAttachment["blurhash"];
+    }
+    if (mediaAttachment["meta"] != null) {
+        const metadata = mediaAttachment["meta"];
+        if (metadata["focus"] != null) {
+            const focus = metadata["focus"];
+            if (focus["x"] != null && focus["y"] != null) {
+                attachment.focalPoint = {x : focus["x"], y: focus["y"]};
+            }
+        }
+        if (metadata["original"] != null) {
+            const original = metadata["original"];
+            if (original["width"] != null && original["height"] != null) {
+                attachment.aspectSize = {width : original["width"], height: original["height"]};
+            }
+        }
+    }
+    // The service's own type maps straight onto the app's media kinds — the one fact a URL can't supply, since a
+    // gifv is a video/mp4 that would otherwise classify as video. An unmapped type (e.g. "unknown") declares
+    // nothing, leaving the app's extension fallback to decide. `metadata` is the service id an edit's submit needs
+    // to reference the attachment; both ride on EVERY attachment so the ordinary read-side object doubles as an
+    // edit seed.
+    attachment.mediaType = { image: "image", gifv: "animation", video: "video", audio: "audio" }[mediaAttachment["type"]];
+    attachment.metadata = { id: mediaAttachment["id"] };
+    return attachment;
 }
 
 // Populate a poll attachment from a Mastodon poll object. Shared by the initial item build and the post-vote
@@ -372,12 +357,28 @@ function supportsMediaWithPoll(instance) {
     return major > 4 || (major == 4 && minor >= 6);
 }
 
-// Build a fresh compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata);
-// `newPost` starts blank. Both mint an idempotency key up front and submit through the same `send` verb.
+// Build a compose draft. `reply` seeds the parent (mentions prefilled, `in_reply_to_id` in metadata); `newPost`
+// starts blank; both mint an idempotency key up front and submit through the same `send` verb. `edit` seeds the
+// target post's complete current state and submits through `saveEdit` instead — the app never learns it's editing.
 async function composeDraft(actionId, target, id) {
     const draft = Draft.create();
-    draft.metadata = { idempotencyKey: crypto.randomUUID() };
-    draft.actions.add("send");
+
+    // An edit re-fetches its target up front: /source for the raw editable text (items carry rendered HTML), the
+    // status itself for everything else (media ids, poll, quote, flags). Both null for every other compose action.
+    const [status, source] = actionId == "edit"
+        ? await Promise.all([fetch(`${site}/api/v1/statuses/${id}`).json(), fetch(`${site}/api/v1/statuses/${id}/source`).json()])
+        : [null, null];
+
+    if (actionId == "edit") {
+        // No idempotency key — that's a create-only header. `sensitive` rides along so saving a CW-less sensitive
+        // post doesn't silently un-mark it (submit infers sensitive FROM the CW; the original flag isn't derivable).
+        draft.metadata = { id: id };
+        if (status.sensitive === true) { draft.metadata.sensitive = "true"; }
+        draft.actions.add("saveEdit");
+    } else {
+        draft.metadata = { idempotencyKey: crypto.randomUUID() };
+        draft.actions.add("send");
+    }
 
     // Character counting matched to the server: the instance's max, URLs weighed as the server does, a mention
     // counting only its "@user". Values from the cached instance record; defaults cover a failed fetch.
@@ -429,7 +430,7 @@ async function composeDraft(actionId, target, id) {
             },
             contentWarning: { availability: "optional" }   // opt-in; the user reveals it to add a warning
         },
-        attributes: composeAttributes(canQuote),
+        attributes: composeAttributes(canQuote, status?.visibility),
         shortcodes: shortcodes,
         // `@` and `#` autocomplete via suggest() (account/hashtag search); `:` emoji is served by `shortcodes` above.
         suggestions: ["@", "#"],
@@ -467,6 +468,40 @@ async function composeDraft(actionId, target, id) {
         draft.header = "Quote " + (target.author?.name ?? target.author?.username ?? "post");
         draft.attachments = [target];
         draft.metadata.quotedId = id;
+    } else if (actionId == "edit") {
+        draft.header = "Edit Post";
+        draft.body = source.text ?? "";
+        if (source.spoiler_text != null && source.spoiler_text.length > 0) { draft.contentWarning = source.spoiler_text; }
+        if (status.language != null) { draft.attributeValues.language = status.language; }
+        // The post's current quote policy, read off quote_approval's automatic list ("public" implies anyone;
+        // "followers" just them; neither means manual-only, i.e. "nobody" automatically).
+        if (canQuote && (status.visibility == "public" || status.visibility == "unlisted")) {
+            const automatic = status.quote_approval?.automatic ?? [];
+            draft.attributeValues.quotePolicy = automatic.includes("public") ? "public" : (automatic.includes("followers") ? "followers" : "nobody");
+        }
+
+        // Seed the attachments by REUSING the ordinary item build: postForItem's media objects already carry
+        // everything an edit needs (they're already-hosted — the app renders them remotely and never re-uploads),
+        // and a quote's nested item seeds as-is (display-only — an edit can't remove or change a quote). Two
+        // adjustments: the link card is dropped (the server regenerates cards itself, and the compose rules
+        // declare no slot for one — seeding it would make the draft un-postable), and the read-side poll is
+        // rebuilt compose-shaped below (an unchanged poll must still be re-submitted or the server destroys it).
+        const attachments = (postForItem(status).attachments ?? []).filter(attachment => attachment.kind != "link" && attachment.kind != "poll");
+        const poll = status["poll"];
+        if (poll != null && poll.options != null && poll.expires_at != null) {
+            const seeded = PollAttachment.create(poll.options.map(option => PollOption.create(option.title)));
+            // Mastodon restarts a poll for its length on EVERY edit (its own client behaves this way), so every
+            // seed gets a duration and never an end date — a stale endDate would also disable Post on an expired
+            // poll, locking even text edits. Under that restart-on-edit norm the current run began at the last
+            // edit (or at creation), so its length is expires_at minus that, clamped to the instance's window.
+            const runStart = new Date(status.edited_at ?? status.created_at).getTime();
+            const runSeconds = Math.round((new Date(poll.expires_at).getTime() - runStart) / 1000);
+            seeded.duration = Math.min(Math.max(runSeconds, pollMinExpiration), pollMaxExpiration);
+            seeded.multipleChoice = poll.multiple === true;
+            seeded.metadata = { id: poll.id };
+            attachments.push(seeded);
+        }
+        draft.attachments = attachments;
     } else {
         draft.header = "New Post";
     }
@@ -476,10 +511,13 @@ async function composeDraft(actionId, target, id) {
 
 // The setting controls Mastodon offers: visibility, post language, and — only on quote-capable instances (4.5+ /
 // API v7) — who may quote. quotePolicy applies only to public/unlisted posts (the server forces private/direct to
-// "nobody"), expressed via `availableWhen` and re-guarded in `send`.
-function composeAttributes(canQuote) {
-    const attributes = [
-        {
+// "nobody"), expressed via `availableWhen` and re-guarded in `send`. An edit passes the post's FIXED visibility
+// (the edit endpoint can't change it): the visibility chip is omitted, and quotePolicy — which IS editable — is
+// then statically present or absent, since an `availableWhen` pointing at an undeclared attribute never unlocks.
+function composeAttributes(canQuote, editVisibility) {
+    const attributes = [];
+    if (editVisibility == null) {
+        attributes.push({
             name: "visibility", prompt: "Visibility", defaultValue: "public",
             choices: [
                 { value: "public", prompt: "Public", description: "Anyone on and off Mastodon", icon: "globe" },
@@ -487,19 +525,22 @@ function composeAttributes(canQuote) {
                 { value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" },
                 { value: "direct", prompt: "Private mention", description: "Everyone mentioned in the post", icon: "at" }
             ]
-        }
-    ];
+        });
+    }
     // "Who can quote" is meaningful only where the server understands quotes (Mastodon 4.5+ / API v7); omit it elsewhere.
-    if (canQuote) {
-        attributes.push({
+    if (canQuote && (editVisibility == null || editVisibility == "public" || editVisibility == "unlisted")) {
+        const quotePolicy = {
             name: "quotePolicy", prompt: "Who can quote", defaultValue: "public",
-            availableWhen: { attribute: "visibility", oneOf: ["public", "unlisted"] },
             choices: [
                 { value: "public", prompt: "Anyone", icon: "quote.bubble" },
                 { value: "followers", prompt: "Followers", icon: "person.2" },
                 { value: "nobody", prompt: "Just me", icon: "nosign" }
             ]
-        });
+        };
+        if (editVisibility == null) {
+            quotePolicy.availableWhen = { attribute: "visibility", oneOf: ["public", "unlisted"] };
+        }
+        attributes.push(quotePolicy);
     }
     attributes.push({ name: "language", type: "language" });
     return attributes;
@@ -741,7 +782,7 @@ async function performAction(actionId, target, actionValue) {
         fillPollAttachment(poll, updated, true);
         return target;
     }
-    else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
+    else if (actionId == "reply" || actionId == "newPost" || actionId == "quote" || actionId == "edit") {
         return composeDraft(actionId, target, id);
     }
     else if (actionId == "send") {

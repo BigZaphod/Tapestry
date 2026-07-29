@@ -404,7 +404,7 @@ function attachmentsForEmbed(embed, did = null) {
                                 attachment.thumbnail = thumb;
                             }
                         }
-                        attachment.mimeType = "image";
+                        attachment.mediaType = "image";
                         attachments.push(attachment);
                     }
                 }
@@ -425,7 +425,8 @@ function attachmentsForEmbed(embed, did = null) {
                         attachment.text = embed.alt;
                     }
                     attachment.thumbnail = thumbnail;
-                    attachment.mimeType = "video/mp4";
+                    // The kind, not a mime: playback URLs are .m3u8 playlists whose extension would otherwise classify as audio.
+                    attachment.mediaType = "video";
                     attachments = [attachment];
                 }
             }
@@ -442,7 +443,7 @@ function attachmentsForEmbed(embed, did = null) {
                     if (embed.thumbnail != null) {
                         attachment.thumbnail = embed.thumbnail;
                     }
-                    attachment.mimeType = "video/mp4";
+                    attachment.mediaType = "video";
                     attachments = [attachment];
                 }
             }
