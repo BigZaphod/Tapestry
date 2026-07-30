@@ -849,27 +849,27 @@ function composeAttributes(isReply) {
     if (!isReply) {
         attributes.push({
             name: "replyAudience",
-            prompt: "Who can reply",
+            label: "Who can reply",
             type: "multiple",
             defaultValue: "everybody",
             requireSelection: true,
             icon: "bubble.left.and.bubble.right",
             choices: [
-                { value: "everybody", prompt: "Everybody", exclusive: true },
-                { value: "nobody", prompt: "Nobody", exclusive: true },
-                { value: "mentioned", prompt: "Mentioned users" },
-                { value: "following", prompt: "People you follow" },
-                { value: "followers", prompt: "Your followers" }
+                { value: "everybody", label: "Everybody", exclusive: true },
+                { value: "nobody", label: "Nobody", exclusive: true },
+                { value: "mentioned", label: "Mentioned users" },
+                { value: "following", label: "People you follow" },
+                { value: "followers", label: "Your followers" }
             ]
         });
     }
     attributes.push({
         name: "allowQuotes",
-        prompt: "Who can quote",
+        label: "Who can quote",
         defaultValue: "on",
         choices: [
-            { value: "on", prompt: "Anyone", icon: "quote.bubble" },
-            { value: "off", prompt: "Nobody", icon: "nosign" }
+            { value: "on", label: "Anyone", icon: "quote.bubble" },
+            { value: "off", label: "Nobody", icon: "nosign" }
         ]
     });
     attributes.push({ name: "language", type: "language" });
@@ -917,10 +917,9 @@ async function suggestAccounts(query) {
     if (query.length === 0) { return []; }
     const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
     return (result.actors ?? []).map(actor => ({
-        display: "@" + actor.handle,
-        detail: actor.displayName,
-        avatar: actor.avatar,
-        insertText: "@" + actor.handle
+        value: "@" + actor.handle,
+        description: actor.displayName,
+        image: actor.avatar
     }));
 }
 

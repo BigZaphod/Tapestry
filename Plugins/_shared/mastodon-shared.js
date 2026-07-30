@@ -518,23 +518,23 @@ function composeAttributes(canQuote, editVisibility) {
     const attributes = [];
     if (editVisibility == null) {
         attributes.push({
-            name: "visibility", prompt: "Visibility", defaultValue: "public",
+            name: "visibility", label: "Visibility", defaultValue: "public",
             choices: [
-                { value: "public", prompt: "Public", description: "Anyone on and off Mastodon", icon: "globe" },
-                { value: "unlisted", prompt: "Quiet public", description: "Hidden from Mastodon search results, trending, and public timelines", icon: "moon" },
-                { value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" },
-                { value: "direct", prompt: "Private mention", description: "Everyone mentioned in the post", icon: "at" }
+                { value: "public", label: "Public", description: "Anyone on and off Mastodon", icon: "globe" },
+                { value: "unlisted", label: "Quiet public", description: "Hidden from Mastodon search results, trending, and public timelines", icon: "moon" },
+                { value: "private", label: "Followers", description: "Only your followers", icon: "lock" },
+                { value: "direct", label: "Private mention", description: "Everyone mentioned in the post", icon: "at" }
             ]
         });
     }
     // "Who can quote" is meaningful only where the server understands quotes (Mastodon 4.5+ / API v7); omit it elsewhere.
     if (canQuote && (editVisibility == null || editVisibility == "public" || editVisibility == "unlisted")) {
         const quotePolicy = {
-            name: "quotePolicy", prompt: "Who can quote", defaultValue: "public",
+            name: "quotePolicy", label: "Who can quote", defaultValue: "public",
             choices: [
-                { value: "public", prompt: "Anyone", icon: "quote.bubble" },
-                { value: "followers", prompt: "Followers", icon: "person.2" },
-                { value: "nobody", prompt: "Just me", icon: "nosign" }
+                { value: "public", label: "Anyone", icon: "quote.bubble" },
+                { value: "followers", label: "Followers", icon: "person.2" },
+                { value: "nobody", label: "Just me", icon: "nosign" }
             ]
         };
         if (editVisibility == null) {
@@ -581,41 +581,40 @@ async function suggestAccounts(query) {
     if (query.length === 0) { return []; }
     const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
     return accounts.map(account => ({
-        display: "@" + account.acct,
-        detail: account.display_name || account.username,
-        avatar: account.avatar,
-        insertText: "@" + account.acct
+        value: "@" + account.acct,
+        description: account.display_name || account.username,
+        image: account.avatar
     }));
 }
 
-// Hashtag autocomplete via /api/v2/search?type=hashtags (authenticated). Hashtags carry no avatar (the composer falls
+// Hashtag autocomplete via /api/v2/search?type=hashtags (authenticated). Hashtags carry no image (the composer falls
 // back to a symbol). The server's `tag.name` is often LOWERCASED (mastodon.social returns "tapestryapp" for what its
 // own web UI shows as "TapestryApp") — because that mixed casing comes from each user's LOCAL tag history, not the
 // API. So we do the same: a most-recent-first history of tags YOU'VE posted (with your casing) is merged ahead of the
 // server results and deduped case-insensitively, so a tag you use shows with your casing. See rememberHashtags.
-// The API's tag.history gives recent-usage counts, surfaced as each row's detail line (keyed by lowercased name, so a
-// history-cased tag still picks up the server's count); history-only tags with no API match show no count.
+// The API's tag.history gives recent-usage counts, surfaced as each row's description line (keyed by lowercased name,
+// so a history-cased tag still picks up the server's count); history-only tags with no API match show no count.
 async function suggestHashtags(query) {
     if (query.length === 0) { return []; }
     const results = await fetch(`${site}/api/v2/search?q=${encodeURIComponent(query)}&type=hashtags`).json();
     const history = historyHashtags(query);
     const seen = new Set(history.map(tag => tag.toLowerCase()));
     const names = [...history];
-    const details = new Map();
+    const descriptions = new Map();
     for (const tag of (results.hashtags ?? [])) {
-        details.set(tag.name.toLowerCase(), usageDetail(tag));
+        descriptions.set(tag.name.toLowerCase(), usageDescription(tag));
         if (!seen.has(tag.name.toLowerCase())) { seen.add(tag.name.toLowerCase()); names.push(tag.name); }
     }
     return names.map(name => {
-        const detail = details.get(name.toLowerCase());
-        return detail ? { display: "#" + name, insertText: "#" + name, detail } : { display: "#" + name, insertText: "#" + name };
+        const description = descriptions.get(name.toLowerCase());
+        return description ? { value: "#" + name, description } : { value: "#" + name };
     });
 }
 
-// A hashtag's recent activity as a short row detail — the exact total posts across the ~7 daily buckets in tag.history
-// (uses arrives as a string), digit-grouped for the user's locale via toLocaleString (JSC's Intl gives 1,234,567 /
-// 1.234.567 / 12,34,567 as appropriate). Undefined when the API reports no activity, so the row omits the line.
-function usageDetail(tag) {
+// A hashtag's recent activity as a short row description — the exact total posts across the ~7 daily buckets in
+// tag.history (uses arrives as a string), digit-grouped for the user's locale via toLocaleString (JSC's Intl gives
+// 1,234,567 / 1.234.567 / 12,34,567 as appropriate). Undefined when the API reports no activity, so the row omits the line.
+function usageDescription(tag) {
     const total = (tag.history ?? []).reduce((sum, day) => sum + (Number(day.uses) || 0), 0);
     if (total === 0) { return undefined; }
     return `${total.toLocaleString()} recent ${total === 1 ? "post" : "posts"}`;

@@ -784,38 +784,38 @@ draft.rules = {
     attributes: [
         {
             name: "visibility",             // key into draft.attributeValues
-            prompt: "Visibility",           // the control's label
+            label: "Visibility",            // the control's label
             // `type` defaults to "single". A two-choice "single" stands in for an on/off switch, so every
             // control has a value to show — there is no switch type here (unlike ui-config.json).
             defaultValue: "public",
             icon: "globe",                  // SF Symbol for the control's chip in the composer bar
             choices: [
-                { value: "public",  prompt: "Public",    description: "Anyone on and off",   icon: "globe" },
-                { value: "private", prompt: "Followers", description: "Only your followers", icon: "lock" }
+                { value: "public",  label: "Public",    description: "Anyone on and off",   icon: "globe" },
+                { value: "private", label: "Followers", description: "Only your followers", icon: "lock" }
             ]
         },
         {
             name: "replyAudience",
-            prompt: "Who can reply",
+            label: "Who can reply",
             type: "multiple",               // pick several; the value is the chosen values comma-joined
             defaultValue: "everybody",
             requireSelection: true,         // the user can't clear the selection entirely
             description: "Everybody can reply by default. Choose “Nobody”, or combine groups.",
             choices: [
-                { value: "everybody", prompt: "Everybody", exclusive: true },  // clears the others when picked
-                { value: "nobody",    prompt: "Nobody",    exclusive: true },
-                { value: "mentioned", prompt: "Mentioned users" },
-                { value: "following", prompt: "People you follow" }
+                { value: "everybody", label: "Everybody", exclusive: true },  // clears the others when picked
+                { value: "nobody",    label: "Nobody",    exclusive: true },
+                { value: "mentioned", label: "Mentioned users" },
+                { value: "following", label: "People you follow" }
             ]
         },
         {
             name: "quotePolicy",
-            prompt: "Who can quote",
+            label: "Who can quote",
             defaultValue: "public",
             availableWhen: { attribute: "visibility", oneOf: ["public"] },   // unavailable otherwise
             choices: [
-                { value: "public", prompt: "Anyone" },
-                { value: "nobody", prompt: "Just me" }
+                { value: "public", label: "Anyone" },
+                { value: "nobody", label: "Just me" }
             ]
         },
         { name: "language", type: "language" }   // app-populated OS language list (ISO 639-1 codes)
@@ -827,10 +827,10 @@ Each attribute has these properties:
 
   * **name** (required) — the key the user's choice is stored under in `draft.attributeValues`.
   * **type** — `"single"` (default; pick one of `choices`), `"multiple"` (pick several; the stored value is the chosen values comma-joined), or `"language"` (a picker the app fills from the OS language list as ISO 639-1 codes — `choices` is ignored, and the app supplies a default label and icon you may override).
-  * **prompt** — the control's label. Optional; `"language"` supplies its own, and `"single"`/`"multiple"` fall back to `name`.
-  * **description** — an optional longer explanation shown under the prompt.
+  * **label** — the control's label. Optional; `"language"` supplies its own, and `"single"`/`"multiple"` fall back to `name`.
+  * **description** — an optional longer explanation shown under the label.
   * **defaultValue** — the value seeded into `attributeValues` when the composer opens (comma-joined for `"multiple"`).
-  * **choices** — an array of `{ value, prompt, description?, icon?, exclusive? }`: `value` is stored, `prompt` is the label, and an optional `description` shows as a second line under the label (e.g. a visibility option's "Only your followers"). An optional `icon` (SF Symbol) becomes the bar chip's glyph while that choice is selected — so the chip reflects the current value at a fixed width (Mastodon visibility uses `globe` / `moon` / `lock` / `at`). Without an icon the chip falls back to the first two letters of the selected choice's prompt. In a `"multiple"`, `exclusive: true` makes a choice clear the others when picked (and any other choice clears it) — for example a "Everybody" that can't coexist with narrower groups.
+  * **choices** — an array of `{ value, label, description?, icon?, exclusive? }`: `value` is stored, `label` is shown, and an optional `description` shows as a second line under the label (e.g. a visibility option's "Only your followers"). An optional `icon` (SF Symbol) becomes the bar chip's glyph while that choice is selected — so the chip reflects the current value at a fixed width (Mastodon visibility uses `globe` / `moon` / `lock` / `at`). Without an icon the chip falls back to the first two letters of the selected choice's label. In a `"multiple"`, `exclusive: true` makes a choice clear the others when picked (and any other choice clears it) — for example a "Everybody" that can't coexist with narrower groups.
   * **requireSelection** — for a `"multiple"`, forbid an empty selection (the user must keep at least one).
   * **icon** — an SF Symbol name for the control's chip in the composer bar.
   * **availableWhen** — `{ attribute, oneOf }`: the control is unavailable unless `attributeValues[attribute]` is one of `oneOf` — it dims and, when the user opens it, the popover explains the condition (e.g. "Available only when Visibility is Public"). This is presentational only — still guard which values you actually apply when submitting.
@@ -1123,7 +1123,7 @@ An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) i
 Called as the user types an autocomplete token beginning with one of the markers declared in
 [`rules.suggestions`](#rules--suggestion-markers) while using the composer. Return the rows to offer; the composer shows them **verbatim** (in
 your order, with no further filtering) and, when the user picks one, it replaces the typed token with that row's
-`insertText`.
+`value`.
 
   * match: A `String` — the whole token as typed, marker included (`"@ali"`, `"#swi"`). A bare marker with no query yet (`"@"`) is passed too, so a connector can offer something for it (e.g. names already in the reply) or just return an empty array.
 
@@ -1136,18 +1136,20 @@ async function suggest(match) {
     if (query.length === 0) { return []; }
     const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
     return accounts.map(account => ({
-        insertText: "@" + account.acct,    // required — the text inserted, and the row's identity
-        display: "@" + account.acct,       // optional — omit to show insertText; set it when display should differ
-        detail: account.display_name,      // optional secondary line
-        avatar: account.avatar             // optional leading image
+        value: "@" + account.acct,         // required — the text inserted, and the row's identity
+        label: "@" + account.acct,         // optional — omit to show value; set it when the shown text should differ
+        description: account.display_name, // optional secondary line
+        image: account.avatar              // optional leading image
     }));
 }
 ```
 
-  * **insertText** — the text that replaces the typed token when the row is picked, and the row's identity. **Required — it's the only field you must return.** The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`). Must be **unique** across the rows you return — two rows that insert the same text are meaningless, and the composer drops any duplicate (keeping the first).
-  * **display** — the primary text shown for the row (e.g. `@alice`). Optional: omit it and the composer shows the `insertText` in its place. Set it when the shown text should differ from what's typed (show a name, insert a handle).
-  * **detail** — an optional secondary line (a display name, a post count).
-  * **avatar** — an optional URL for a leading image (an account avatar); a row without one shows a placeholder.
+The row shape is the same stored-vs-shown split as an [attribute choice](#rules--setting-attributes): `value` is what the pick *does*, `label` is what the row *shows*.
+
+  * **value** — the text that replaces the typed token when the row is picked, and the row's identity. **Required — it's the only field you must return.** The composer appends a trailing space itself, so return the bare mention/hashtag (`"@alice"`, not `"@alice "`). Must be **unique** across the rows you return — two rows that insert the same text are meaningless, and the composer drops any duplicate (keeping the first).
+  * **label** — the primary text shown for the row (e.g. `@alice`). Optional: omit it and the composer shows the `value` in its place. Set it when the shown text should differ from what's typed (show a name, insert a handle).
+  * **description** — an optional secondary line (a display name, a post count).
+  * **image** — an optional URL for a leading image (an account avatar, a custom emoji); a row without one shows a placeholder.
 
 `suggest()` is **best-effort** and fired on every (debounced) keystroke, so it must return quickly. It does **not** need to guard its own errors: a thrown failure is logged but doesn't interrupt the composing user. A newer keystroke cancels an in-flight `suggest()` before the next is issued, so only the latest query is ever outstanding.
 
