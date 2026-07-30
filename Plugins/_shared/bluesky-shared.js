@@ -360,6 +360,78 @@ function contentForReply(reply) {
     return content;
 }
 
+// Bluesky has no GIF embed type — the GIF picker posts an external link card pointing at the GIF host, and clients
+// that want inline playback sniff the URL. As crazy as that sounds, it's the authoritative mechanism: the official
+// client does exactly this in bluesky-social/social-app src/lib/strings/embed-player.ts, and everything here
+// (the host list, the hh/ww gate, the CDN rewrites) mirrors that file. Recognize the hosts it special-cases
+// (Tenor and Klipy) by the picker's hh/ww dimension params and rewrite to the silent mp4 rendition on Bluesky's
+// gifs.bsky.app CDN, which is ~10x smaller than the GIF. If the rewrite ingredients are missing (their URL format
+// drifted), fall back to the raw GIF so the post still shows media at GIF bandwidth. Returns null for anything
+// else → link card.
+function animationForGifExternal(external) {
+    // Parsed by hand — connector JS runs in bare JavaScriptCore, which has no WHATWG URL/URLSearchParams.
+    const urlMatch = /^https:\/\/([^/?#]+)([^?#]*)(?:\?([^#]*))?/.exec(external.uri ?? "");
+    if (urlMatch == null) {
+        return null;
+    }
+    const hostname = urlMatch[1];
+    const pathname = urlMatch[2];
+    const params = {};
+    for (const pair of (urlMatch[3] ?? "").split("&")) {
+        const eq = pair.indexOf("=");
+        if (eq > 0) {
+            params[pair.slice(0, eq)] = pair.slice(eq + 1);
+        }
+    }
+
+    const isTenor = (hostname == "media.tenor.com");
+    const isKlipy = (hostname == "static.klipy.com" && pathname.startsWith("/ii/"));
+    if (!isTenor && !isKlipy) {
+        return null;
+    }
+
+    const width = Number(params.ww);
+    const height = Number(params.hh);
+    if (!(width > 0) || !(height > 0)) {
+        return null;
+    }
+
+    let media = null;
+    if (isTenor) {
+        // Tenor encodes the rendition in the ID path segment: AAAAC = gif, AAAP1 = mp4.
+        const [, id, filename] = pathname.split("/");
+        if (id != null && id.includes("AAAAC") && filename != null && filename.endsWith(".gif")) {
+            media = `https://t.gifs.bsky.app/${id.replace("AAAAC", "AAAP1")}/${filename.replace(".gif", ".mp4")}`;
+        }
+    }
+    else {
+        // Klipy embeds a per-format filename slug as an mp4 query param at compose time.
+        const slug = params.mp4;
+        if (slug != null && slug.length > 0) {
+            const parts = pathname.split("/");
+            parts[parts.length - 1] = `${slug}.mp4`;
+            media = `https://k.gifs.bsky.app${parts.join("/")}`;
+        }
+    }
+
+    if (media == null) {
+        if (!pathname.endsWith(".gif")) {
+            return null;
+        }
+        console.log(`GIF embed mp4 rewrite failed, falling back to raw GIF: ${external.uri}`);
+        media = external.uri;
+    }
+
+    const attachment = MediaAttachment.createWithUrl(media);
+    attachment.aspectSize = { width: width, height: height };
+    // The picker prefixes the user's alt text onto the card description.
+    if (external.description != null && external.description.startsWith("Alt: ")) {
+        attachment.text = external.description.slice(5);
+    }
+    attachment.mediaType = "animation";
+    return attachment;
+}
+
 function attachmentsForEmbed(embed, did = null) {
     let attachments = null;
     
@@ -451,28 +523,42 @@ function attachmentsForEmbed(embed, did = null) {
         else if (embed.$type.startsWith("app.bsky.embed.external")) {
             if (embed.external != null && embed.external.uri != null) {
                 const isBlob = (embed.external?.thumb?.$type == "blob");
-                
+
                 const external = embed.external;
-                let attachment = LinkAttachment.createWithUrl(external.uri);
-                if (external.title != null && external.title.length > 0) {
-                    attachment.title = external.title;
-                }
-                if (external.description != null && external.description.length > 0) {
-                    attachment.subtitle = external.description;
-                }
+                let thumbnail = null;
                 if (isBlob) {
                     if (did != null && embed.external?.thumb?.ref?.$link != null) {
                         const ref = embed.external?.thumb?.ref?.$link;
                         const suffix = embed.external?.thumb?.mimeType.split("/")[1] ?? "";
-                        attachment.image = `${uriPrefixContent}/img/feed_thumbnail/plain/${did}/${ref}@${suffix}`;
+                        thumbnail = `${uriPrefixContent}/img/feed_thumbnail/plain/${did}/${ref}@${suffix}`;
                     }
                 }
                 else {
                     if (external.thumb != null && external.thumb.length > 0) {
-                        attachment.image = external.thumb;
+                        thumbnail = external.thumb;
                     }
                 }
-                attachments = [attachment];
+
+                const animation = animationForGifExternal(external);
+                if (animation != null) {
+                    if (thumbnail != null) {
+                        animation.thumbnail = thumbnail;
+                    }
+                    attachments = [animation];
+                }
+                else {
+                    let attachment = LinkAttachment.createWithUrl(external.uri);
+                    if (external.title != null && external.title.length > 0) {
+                        attachment.title = external.title;
+                    }
+                    if (external.description != null && external.description.length > 0) {
+                        attachment.subtitle = external.description;
+                    }
+                    if (thumbnail != null) {
+                        attachment.image = thumbnail;
+                    }
+                    attachments = [attachment];
+                }
             }
         }
         else if (embed.$type.startsWith("app.bsky.embed.recordWithMedia")) {
