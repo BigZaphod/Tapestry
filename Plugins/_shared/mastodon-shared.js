@@ -370,10 +370,9 @@ async function composeDraft(actionId, target, id) {
         : [null, null];
 
     if (actionId == "edit") {
-        // No idempotency key — that's a create-only header. `sensitive` rides along so saving a CW-less sensitive
-        // post doesn't silently un-mark it (submit infers sensitive FROM the CW; the original flag isn't derivable).
+        // No idempotency key — that's a create-only header. The `sensitive` flag deliberately does NOT ride along:
+        // the app has one concept, the content warning, and saveEdit derives the flag from it (see there).
         draft.metadata = { id: id };
-        if (status.sensitive === true) { draft.metadata.sensitive = "true"; }
         draft.actions.add("saveEdit");
     } else {
         draft.metadata = { idempotencyKey: crypto.randomUUID() };
@@ -397,8 +396,10 @@ async function composeDraft(actionId, target, id) {
     // the conventional client menu, filtered to the instance's allowed [min, max] expiration so we never offer one the
     // server would reject; the same window backs a free custom end-date pick.
     const pollCfg = instance?.configuration?.polls;
+    // Fallbacks are Mastodon's own constants (PollExpirationValidator MIN/MAX_EXPIRATION), not round numbers: the
+    // max is Rails' `1.month`, an average Gregorian month of 30.44 days, which is what instances actually report.
     const pollMinExpiration = pollCfg?.min_expiration ?? 300;         // 5 minutes
-    const pollMaxExpiration = pollCfg?.max_expiration ?? 2592000;     // ~30 days
+    const pollMaxExpiration = pollCfg?.max_expiration ?? 2629746;     // 1 month
     // The FIRST preset is the app's default length, so 1 day (Mastodon's own default) leads; the rest follow
     // chronologically (the app re-sorts by length for display). Filtered to the instance's allowed [min, max]. The
     // custom end-date mode inherits this same 1-day default (it declares no `default` of its own).
@@ -449,7 +450,7 @@ async function composeDraft(actionId, target, id) {
         poll: {
             options: { min: 2, max: pollCfg?.max_options ?? 4, characterLimit: { maxLength: pollCfg?.max_characters_per_option ?? 50 } },
             supportsMultipleChoice: true,   // Mastodon always allows it — no instance gate
-            duration: { endDate: { min: pollMinExpiration, max: pollMaxExpiration }, presets: pollPresets }
+            duration: { range: { min: pollMinExpiration, max: pollMaxExpiration }, presets: pollPresets }
         }
     };
 
@@ -695,6 +696,20 @@ async function updateMediaMetadata(id, description, focus) {
     await fetch(`${site}/api/v1/media/${id}`, { method: "PUT", json: { description: description, focus: focus } });
 }
 
+// The `poll` parameter both status verbs send, or undefined when the draft carries no poll. A poll rides in the draft
+// attachments as the same {kind:"poll"} object the read side emits, carrying the length the user chose as `duration`
+// in seconds — which is `expires_in` directly. Options are the non-empty titles in order (blank/duplicate options are
+// the server's to reject, not ours to strip beyond emptiness).
+function pollParamsForDraft(draft) {
+    const attachment = (draft.attachments ?? []).find(a => a.kind == "poll");
+    if (attachment == null) { return undefined; }
+    return {
+        options: attachment.options.map(option => option.title).filter(title => title.length > 0),
+        expires_in: attachment.duration,
+        multiple: attachment.multipleChoice === true,
+    };
+}
+
 async function performAction(actionId, target, actionValue) {
     // Status id lives on item.metadata; older items stored it as the action value — fall back for those.
     // `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
@@ -806,23 +821,8 @@ async function performAction(actionId, target, actionValue) {
             mediaIds.push(id);
         }
 
-        // A poll rides in the draft attachments as the same {kind:"poll"} object the read side emits. Its length is
-        // either a chosen preset `duration` (seconds) or a custom `endDate` we convert to seconds-from-now; options
-        // are the non-empty titles in order (blank/duplicate options are the server's to reject, not ours to strip
-        // beyond emptiness). Media + poll coexist only on 4.6+, but the compose rules already gate that pairing.
-        const pollAttachment = (draft.attachments ?? []).find(a => a.kind == "poll");
-        let poll = undefined;
-        if (pollAttachment != null) {
-            let expiresIn = pollAttachment.duration;
-            if (expiresIn == null && pollAttachment.endDate != null) {
-                expiresIn = Math.round((new Date(pollAttachment.endDate).getTime() - Date.now()) / 1000);
-            }
-            poll = {
-                options: pollAttachment.options.map(option => option.title).filter(title => title.length > 0),
-                expires_in: expiresIn,
-                multiple: pollAttachment.multipleChoice === true,
-            };
-        }
+        // Media + poll coexist only on 4.6+, but the compose rules already gate that pairing.
+        const poll = pollParamsForDraft(draft);
 
         const body = {
             status: draft.body,
@@ -842,6 +842,53 @@ async function performAction(actionId, target, actionValue) {
         };
         const status = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
         rememberHashtags(draft.body);   // remember the tags you just used (with your casing) for future autocomplete
+        return [postForItem(status)];
+    }
+    else if (actionId == "saveEdit") {
+        // Here `target` is the draft `edit` seeded, carrying its target's id in metadata. Mastodon takes the post's
+        // COMPLETE final state and works out the mutations itself, so this sends the draft as-is — no diffing.
+        const draft = target;
+        const attributes = draft.attributeValues ?? {};
+        const contentWarning = draft.contentWarning;
+        const hasContentWarning = contentWarning != null && contentWarning.length > 0;
+
+        // The final media set in draft order — order IS post order. A seeded attachment already carries its service
+        // ref; a freshly picked one was pre-uploaded during compose (uploaded here only if that somehow didn't run).
+        // Alt text and focus go in band as media_attributes[] rather than the create path's PUT /v1/media/:id, which
+        // 404s for media already attached to a post. The server resolves the final media set FIRST, applies these
+        // against it, and only then attaches — so media arriving for the first time in this very request takes its
+        // description here too, with no per-attachment branch. Both fields go on every attachment unconditionally:
+        // the server updates only the keys it's given, so an omitted description would leave a cleared one standing
+        // (and a cleared focal point is dead-center "0,0", which is what unset means anyway).
+        const mediaIds = [];
+        const mediaAttributes = [];
+        for (const attachment of (draft.attachments ?? []).filter(a => a.kind == "media")) {
+            const id = attachment.metadata?.id ?? (await uploadMedia(attachment.file, attachment.mediaType)).id;
+            const point = attachment.focalPoint;
+            mediaIds.push(id);
+            mediaAttributes.push({ id: id, description: attachment.text ?? "", focus: point ? `${point.x},${point.y}` : "0,0" });
+        }
+
+        // Every key below is sent even when empty, because the server acts on a parameter only when its key is
+        // PRESENT: an omitted media_ids/spoiler_text/poll means "leave this alone", not "the user removed it". An
+        // explicitly null poll is how a removal reaches the server. `sensitive` tracks the content warning and
+        // nothing else — the app has a single concept, and the read side turns a bare flag INTO a warning, so a
+        // preserved flag would leave a "Sensitive content" warning the composer never shows and can't clear.
+        // Mastodon's own client ties the two the same way whenever a post has media. No Idempotency-Key
+        // (create-only), no visibility, and no quoted_status_id: the edit endpoint accepts none of the three.
+        const body = {
+            status: draft.body,
+            language: attributes.language,
+            media_ids: mediaIds,
+            media_attributes: mediaAttributes,
+            poll: pollParamsForDraft(draft) ?? null,
+            spoiler_text: hasContentWarning ? contentWarning : "",
+            sensitive: hasContentWarning,
+            quote_approval_policy: attributes.quotePolicy
+        };
+        const status = await fetch(`${site}/api/v1/statuses/${draft.metadata?.id}`, { method: "PUT", json: body }).json();
+        rememberHashtags(draft.body);
+        // The edited post is already in the catalog, so this updates it in place rather than adding a new item.
         return [postForItem(status)];
     }
     else {
