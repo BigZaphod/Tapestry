@@ -201,22 +201,29 @@ Before uploading a file, fit it to the service's limits with the correct transfo
 
 #### Polls
 
-If your service supports it, allow a `poll` slot in [`rules.attachments`](#rules--attachments) and declare its shape in [`rules.poll`](#rules--poll); the composer then offers a poll editor. At submit, the poll rides in [`draft.attachments`](#attachments-array-of-item-and-media) as a `kind: "poll"` object — the **same [`PollAttachment`](#pollattachment) shape** the read side emits, now carrying the length the user chose: a preset choice sets [`duration`](#duration-number-optional) (seconds), a custom end date sets [`endDate`](#enddate-date-optional). Your submit function reads it and builds the service's create request:
+If your service supports it, allow a `poll` slot in [`rules.attachments`](#rules--attachments) and declare its shape in [`rules.poll`](#rules--poll); the composer then offers a poll editor. At submit, the poll rides in [`draft.attachments`](#attachments-array-of-item-and-media) as a `kind: "poll"` object — the **same [`PollAttachment`](#pollattachment) shape** the read side emits, now carrying the length the user chose in [`duration`](#duration-number-optional) (seconds). Whether they picked a preset or typed a custom length, it arrives the same way. Your submit function reads it and builds the service's create request:
 
 ```javascript
 const poll = (draft.attachments ?? []).find(a => a.kind === "poll");
 if (poll != null) {
-  // Prefer duration over endDate — an edit-mode poll may carry both (a fresh duration alongside a stale endDate):
-  let expiresIn = poll.duration;
-  if (expiresIn == null && poll.endDate != null) {
-    expiresIn = Math.round((new Date(poll.endDate).getTime() - Date.now()) / 1000);
-  }
-  // poll.options[].title are the user's options in order; poll.multipleChoice is the single/multiple selection.
-  // Send those plus expiresIn however the service's create API wants.
+  // poll.duration is the length in seconds; poll.options[].title are the user's options in order;
+  // poll.multipleChoice is the single/multiple selection. Send those however the service's create API wants.
 }
 ```
 
-The `options` array holds only the options the user actually filled in, in order — the composer drops the empty trailing slots for you. It does **not** dedupe or trim whitespace-only options (they're content the user typed); let the service reject those on submit, as its own web composer would. If you offered no `duration` control, both `duration` and `endDate` are unset — the length is the service's to decide.
+A composed poll's length is always a **duration** in seconds — the composer never sets [`endDate`](#enddate-date-optional) on one.
+
+The `options` array holds only the options the user actually filled in, in order — the composer drops the empty trailing slots for you. It does **not** dedupe or trim whitespace-only options (they're content the user typed); let the service reject those on submit, as its own web composer would. If you offered no `duration` control, `duration` is unset — the length is the service's to decide.
+
+#### Editing an existing post
+
+Editing needs no special support: it's an ordinary [`compose`](#action-roles) action on an item that returns a `Draft` **already filled in**, plus a submit action of its own. Tapestry never learns that it's an edit — it opens the same composer with the same rules — so round-trip whatever identifies the post in [`draft.metadata`](#metadata-dictionary-4) and read it back in your submit function.
+
+Seed the existing attachments as ordinary media objects carrying a `url` rather than a `file`, each with the service's own reference in its [`metadata`](#metadata-dictionary-1) — which is exactly what your read side already builds, so `postForItem(status).attachments` is usually the seed. **No bytes move**: Tapestry displays remote media through the same cached path the timeline uses, lazily and only for what's shown, and never re-uploads it. Everything else follows from that — the composer won't upload an attachment that's already hosted, alt text and focus point seed the live-editable values, and a seeded attachment sits alongside a freshly picked one with no special case.
+
+Declare your rules as usual, but **omit the attributes the service won't let you change** on an edit — and drop any attribute whose [`availableWhen`](#rules--setting-attributes) points at one you omitted, or it can never unlock. A value that's immutable but worth showing (a quote, say) can be seeded as an attachment and simply never sent.
+
+Your submit function receives the **complete final state**, not a changelog, and reconstructs the mutations itself: an attachment carrying a `metadata` reference was already there, one carrying a `file` is new, one that's absent was removed, and list order is post order. Return the updated item — results only re-save records Tapestry already has, so an in-place edit updates the post rather than adding a second copy. A service with no edit endpoint can delete and recreate instead, returning the new item plus [`Item.delete()`](#removing-an-item) for the old one.
 
 ---
 ## Variables
@@ -612,7 +619,7 @@ An optional date that the poll ends. If not specified, Tapestry renders the poll
 
 #### duration: Number (optional)
 
-The poll's length in **seconds**, when it's known as a duration rather than an absolute end. This is where a poll being **composed** carries the user's chosen *length* (a fixed preset choice — see [Composing → Polls](#polls)); your submit function converts it to whatever the create API wants. A read-side poll may set it too if the service reports a duration. When a poll carries **both** `duration` and `endDate`, `duration` is authoritative — Tapestry, and your connector, should prefer it (an edit-mode poll may arrive with a fresh `duration` alongside a stale `endDate`); the composer never lets both go out for a poll the user built.
+The poll's length in **seconds**, when it's known as a duration rather than an absolute end. This is where a poll being **composed** carries the user's chosen *length* — a preset or a custom entry, both arrive here (see [Composing → Polls](#polls)); your submit function converts it to whatever the create API wants. A read-side poll may set it too if the service reports a duration. When a poll carries **both** `duration` and `endDate`, `duration` is authoritative — Tapestry, and your connector, should prefer it.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -961,7 +968,7 @@ draft.rules.poll = {
       { label: "5 minutes", seconds: 300    },
       { label: "7 days",    seconds: 604800 }
     ],
-    endDate: { min: 300, max: 2592000, default: 86400 }   // OR a free custom end date within [min, max]
+    range: { min: 300, max: 2592000, default: 86400 }   // AND/OR a free custom length within [min, max] seconds
   }
 };
 ```
@@ -970,8 +977,8 @@ draft.rules.poll = {
   * **supportsMultipleChoice** — whether the editor offers a single-vs-multiple-choice control. Omitted ⇒ single choice only.
   * **duration** — how the user sets the poll's length. Both parts are optional:
       * **presets** — a fixed menu of lengths, each `{ label, seconds }`. Choosing one sets the poll's [`duration`](#duration-number-optional). **The first preset is the default** a fresh poll seeds to, so order them default-first (not chronologically) — the app re-sorts by length for display.
-      * **endDate** — a free **custom end date** the user picks within `{ min, max?, default? }` seconds-from-now (`max` optional ⇒ unbounded). Choosing it sets the poll's [`endDate`](#enddate-date-optional). `default` is the length a fresh custom pick seeds to; omit it and it inherits the first preset's length, else `min`.
-      * Declare **both** and the menu gains a "Custom…" entry that reveals the date picker. Omit `duration` entirely (or leave it empty) and the composer shows **no length control** — the poll goes out carrying neither `duration` nor `endDate`, and the service decides the length.
+      * **range** — a free **custom length** the user enters within `{ min, max?, default? }`, all in seconds (`max` optional ⇒ unbounded). The composer offers a plain seconds field, shows the value back in words underneath ("2 weeks, 1 day"), and clamps what the user enters to your window. Choosing it sets the poll's [`duration`](#duration-number-optional), same as a preset. `default` is the length a fresh custom entry seeds to; omit it and it inherits the first preset's length, else `min`.
+      * Declare **both** and the menu gains a "Custom…" entry that reveals the seconds field. Presets are what the user will reach for; the custom field is the escape hatch — including for a poll seeded with a length that matches none of your presets, which is what happens when the user edits a poll created in some other client. Omit `duration` entirely (or leave it empty) and the composer shows **no length control** — the poll goes out carrying no `duration`, and the service decides the length.
 
     Read the finished poll back at submit — see [Composing → Polls](#polls).
 
