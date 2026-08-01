@@ -242,7 +242,7 @@ function postForEmbeddedRecord(record) {
 }
 
 function identityForAccount(account) {
-    const name = nameForAccount(account);
+    const name = displayNameForAccount(account);
     if (name == null) {
         return null;
     }
@@ -269,16 +269,23 @@ function contentForAccount(account, prefix = "") {
     return `<p>${prefix}<a href="${authorUri}">${name}</a></p>`;
 }
 
+// Contextual name for annotations ("Reposted by you", "In reply to you") — reads as "you" when the account is the
+// authenticated user, like Mastodon's "Boosted by you". The author byline uses displayNameForAccount instead, so your
+// own posts are still bylined with your real name.
 function nameForAccount(account) {
+    const did = getItem("didSelf");
+    if (account?.did != null && did != null && did == account.did) {
+        return "you";
+    }
+
+    return displayNameForAccount(account);
+}
+
+function displayNameForAccount(account) {
     if (account == null || account.handle == null) {
         return null;
     }
 
-    const did = getItem("didSelf");
-    if (did != null && did == account.did) {
-        return "you";
-    }
-	
     if (account.displayName != null && account.displayName.length > 0) {
         return account.displayName;
     }
