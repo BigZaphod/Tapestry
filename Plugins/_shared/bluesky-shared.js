@@ -60,7 +60,14 @@ function parentPostForItem(item, includeActions, results) {
 }
 
 function postForItem(item, includeActions = false, dateOverride = null, allowRepliesFromOthers = true) {
-    let date = dateOverride ?? (new Date(item.post.indexedAt));
+    // Bluesky places a post at the EARLIER of when the server indexed it and the `createdAt` its author claims —
+    // its own `sortAt` rule, reproduced here rather than taking `indexedAt` alone. Editing a post re-creates the
+    // record (see `saveEdit`), so `indexedAt` would drag an edited post to the top of the timeline while the
+    // network itself leaves it exactly where it was; `createdAt` alone would let a future-dated post pin itself
+    // there forever.
+    const indexedAt = new Date(item.post.indexedAt);
+    const createdAt = new Date(item.post.record?.createdAt ?? item.post.indexedAt);
+    let date = dateOverride ?? (createdAt < indexedAt ? createdAt : indexedAt);
 
     const author = item.post.author;
     
@@ -118,9 +125,10 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         if (item.post.viewer?.bookmarked != null) {
             actions.push(item.post.viewer?.bookmarked == false ? "save" : "unsave");
         }
-        // Only your own posts can be deleted. "didSelf" is the authenticated account's DID, stored at login.
+        // Only your own posts can be edited or deleted. "didSelf" is the authenticated account's DID, stored at login.
         const didSelf = getItem("didSelf");
         if (didSelf != null && author.did == didSelf) {
+            actions.push("edit");
             actions.push("delete");
         }
     }
@@ -838,7 +846,11 @@ async function buildImagesEmbed(attachments) {
         const { blob, width, height } = meta != null
             ? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
             : await uploadImage(attachment.file);
-        items.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width: width, height: height } });
+        // aspectRatio is optional in the lexicon, and a post being edited may have been made by a client that left
+        // it off — so send it only when it's actually known rather than a meaningless 0×0.
+        const item = { image: blob, alt: attachment.text ?? "" };
+        if (width > 0 && height > 0) { item.aspectRatio = { width: width, height: height }; }
+        items.push(item);
     }
     // gallery `items` is a UNION (of `#image`), so each member needs a `$type` discriminator; the `images`
     // embed's plain-ref array doesn't. The per-item blob/alt/aspectRatio is identical either way.
@@ -854,19 +866,77 @@ async function buildVideoEmbed(attachment) {
     const { blob, width, height } = meta != null
         ? { blob: JSON.parse(meta.blob), width: Number(meta.width), height: Number(meta.height) }
         : await uploadVideo(attachment.file);
-    const embed = { "$type": "app.bsky.embed.video", video: blob, aspectRatio: { width: width, height: height } };
+    const embed = { "$type": "app.bsky.embed.video", video: blob };
+    if (width > 0 && height > 0) { embed.aspectRatio = { width: width, height: height }; }
     if (attachment.text) { embed.alt = attachment.text; }
     return embed;
 }
 
-// Build a fresh compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display;
-// no mention prefill — a Bluesky reply notifies the parent via the ref (matching the official client), and any
+// Build the `app.bsky.feed.post` record a finished draft describes: text and its facets, language, reply refs, and
+// the one embed — a video, image set or link card, a quote, or (as `recordWithMedia`) a quote alongside one of
+// those. Shared by `send` and `saveEdit`, because an edit rewrites the record WHOLE: the two must construct it
+// identically or an edit would quietly drop whatever they disagreed on. Only `createdAt` differs — an edit passes
+// the post's original.
+async function buildPostRecord(draft, createdAt) {
+    const attributes = draft.attributeValues ?? {};
+    const record = {
+        "$type": "app.bsky.feed.post",
+        text: draft.body,
+        createdAt: createdAt,
+    };
+    if (attributes.language != null) { record.langs = [attributes.language]; }
+    if (draft.metadata.parentUri != null) {
+        record.reply = {
+            root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
+            parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
+        };
+    }
+    // The post's ONE media embed is a video, image set, or link card (mutually exclusive); a quote is a `record`
+    // embed. Media + quote combine via `recordWithMedia`; either can stand alone. Route by each media's `mediaType`.
+    const mediaAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
+    const videoAttachment = mediaAttachments.find(a => a.mediaType === "video");
+    const imageAttachments = mediaAttachments.filter(a => a.mediaType === "image");
+    const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
+    let mediaEmbed = null;
+    if (videoAttachment != null) {
+        mediaEmbed = await buildVideoEmbed(videoAttachment);
+    } else if (imageAttachments.length > 0) {
+        mediaEmbed = await buildImagesEmbed(imageAttachments);
+    } else if (linkAttachment != null) {
+        mediaEmbed = await buildExternalEmbed(linkAttachment);
+    }
+    if (draft.metadata.quoteUri != null) {
+        const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
+        record.embed = mediaEmbed != null
+            ? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: mediaEmbed }
+            : quoteEmbed;
+    } else if (mediaEmbed != null) {
+        record.embed = mediaEmbed;
+    }
+    const facets = await buildFacets(draft.body);
+    if (facets.length > 0) { record.facets = facets; }
+    return record;
+}
+
+// Build a compose draft. `reply` seeds the reply refs (root + parent) for threading and the post to display; no
+// mention prefill — a Bluesky reply notifies the parent via the ref (matching the official client), and any
 // @-mention the user types becomes a facet at send. `newPost` starts blank. Both carry a client-chosen `rkey` for
-// idempotency and submit through the same `send` verb.
-function composeDraft(actionId, target, metadata) {
+// idempotency and submit through the same `send` verb. `edit` seeds the target post's complete current state and
+// submits through `saveEdit` instead — the app never learns it's editing.
+async function composeDraft(actionId, target, metadata) {
     const draft = Draft.create();
-    draft.metadata = { rkey: nextTid() };
-    draft.actions.add("send");
+
+    // An edit re-reads its target up front: the post RECORD is what gets rewritten, and the timeline item carries
+    // rendered HTML rather than the text the user typed. `getPosts` returns both halves in one call — the raw
+    // record to seed from, and the hydrated view the composer displays.
+    const view = actionId == "edit"
+        ? (await fetch(`${site}/xrpc/app.bsky.feed.getPosts?uris=${encodeURIComponent(metadata.uri)}`).json()).posts?.[0]
+        : null;
+    if (actionId == "edit" && view == null) { throw new Error("This post couldn’t be loaded for editing."); }
+
+    // An edit rewrites the post in place, so it keeps the post's OWN rkey rather than minting one for idempotency.
+    draft.metadata = { rkey: actionId == "edit" ? metadata.uri.split("/").pop() : nextTid() };
+    draft.actions.add(actionId == "edit" ? "saveEdit" : "send");
 
     // Bluesky posts are limited to BOTH 300 graphemes and 3000 UTF-8 bytes (the `app.bsky.feed.post` lexicon caps
     // text at maxGraphemes:300 / maxLength:3000). The byte cap can bind first on emoji-heavy text. No weighting:
@@ -876,7 +946,7 @@ function composeDraft(actionId, target, metadata) {
         characterUnit: "graphemes",
         characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
         fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
-        attributes: composeAttributes(actionId == "reply"),
+        attributes: composeAttributes(actionId),
         // @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so
         // `#` isn't offered.
         suggestions: ["@"],
@@ -916,11 +986,71 @@ function composeDraft(actionId, target, metadata) {
         draft.attachments = [target];
         draft.metadata.quoteUri = metadata.uri;
         draft.metadata.quoteCid = metadata.cid;
+    } else if (actionId == "edit") {
+        const record = view.record;
+        draft.header = "Edit Post";
+        draft.body = record.text ?? "";
+        // `saveEdit` rewrites the record whole, so everything the composer doesn't edit has to ride through the
+        // draft or it gets dropped: the original creation time (which keeps the post where it already sits in the
+        // timeline), the reply refs that make it a reply at all, and a quote's strong ref. The quote ALSO seeds as
+        // an attachment, for display only — there's no way to drop it in the composer, it's simply re-sent.
+        // The current cid rides along too, so `saveEdit` can tell the AppView's re-read apart from the old post.
+        draft.metadata.createdAt = record.createdAt;
+        draft.metadata.cid = view.cid;
+        if (record.reply != null) {
+            draft.metadata.rootUri = record.reply.root.uri;
+            draft.metadata.rootCid = record.reply.root.cid;
+            draft.metadata.parentUri = record.reply.parent.uri;
+            draft.metadata.parentCid = record.reply.parent.cid;
+        }
+        const quote = record.embed?.$type == "app.bsky.embed.recordWithMedia" ? record.embed.record?.record
+                    : record.embed?.$type == "app.bsky.embed.record" ? record.embed.record : null;
+        if (quote != null) {
+            draft.metadata.quoteUri = quote.uri;
+            draft.metadata.quoteCid = quote.cid;
+        }
+        if (record.langs?.[0] != null) { draft.attributeValues.language = record.langs[0]; }
+        draft.attachments = editAttachments(record, view);
     } else {
         draft.header = "New Post";
     }
 
     return draft;
+}
+
+// Seed an edit's attachments. The composer should show the post the way the timeline does, so this starts from the
+// same build and then reconciles the two places where the RENDERED attachment isn't what the record actually holds.
+// Each media attachment is stamped with the blob it already has on the service, so saving reuses it instead of
+// re-uploading bytes the app never downloaded. And a GIF — which Bluesky stores as an external card and the
+// timeline renders as an animation — is put back to the link card it really is: the composer offers no animation
+// slot, so seeding the rendered form would leave a draft that could never be saved. A quote comes along untouched.
+function editAttachments(record, view) {
+    const attachments = attachmentsForEmbed(view.embed) ?? [];
+    const embed = record.embed?.$type == "app.bsky.embed.recordWithMedia" ? record.embed.media : record.embed;
+
+    if (embed?.$type == "app.bsky.embed.external") {
+        // Rebuilt from the record rather than adjusted in place, so the card carries the title and description the
+        // post actually stores (a GIF's alt text lives in that description). Its thumbnail is re-fetched and
+        // re-uploaded at save, which is a round trip but keeps this to the fields the record really has.
+        const card = LinkAttachment.createWithUrl(embed.external.uri);
+        if (embed.external.title) { card.title = embed.external.title; }
+        if (embed.external.description) { card.subtitle = embed.external.description; }
+        const thumbnail = attachments[0]?.thumbnail ?? attachments[0]?.image;
+        if (thumbnail != null) { card.image = thumbnail; }
+        attachments[0] = card;
+        return attachments;
+    }
+
+    const items = embed?.$type == "app.bsky.embed.images" ? (embed.images ?? [])
+                : embed?.$type == "app.bsky.embed.gallery" ? (embed.items ?? [])
+                : embed?.$type == "app.bsky.embed.video" ? [embed] : [];
+    // Media leads the attachments in record order (a quote is appended last), so index pairs the two lists.
+    for (let index = 0; index < items.length && index < attachments.length; index++) {
+        const item = items[index];
+        const size = item.aspectRatio ?? {};
+        attachments[index].metadata = { blob: JSON.stringify(item.image ?? item.video), width: `${size.width ?? 0}`, height: `${size.height ?? 0}` };
+    }
+    return attachments;
 }
 
 // Bluesky's composer settings: who may reply (threadgate), whether the post can be quoted (postgate), and the post
@@ -930,9 +1060,13 @@ function composeDraft(actionId, target, metadata) {
 //
 // A threadgate is structurally root-only in atproto (its rkey must equal the thread root's), so reply audience can't
 // be set on a reply — that attribute is offered only on top-level posts.
-function composeAttributes(isReply) {
+//
+// An edit offers NEITHER gate. Both are separate records alongside the post, not part of it, so `saveEdit` doesn't
+// write them and the post's existing reply/quote settings survive an edit untouched — offering controls that were
+// never going to be written would lie about what saving does.
+function composeAttributes(actionId) {
     const attributes = [];
-    if (!isReply) {
+    if (actionId != "reply" && actionId != "edit") {
         attributes.push({
             name: "replyAudience",
             label: "Who can reply",
@@ -949,15 +1083,17 @@ function composeAttributes(isReply) {
             ]
         });
     }
-    attributes.push({
-        name: "allowQuotes",
-        label: "Who can quote",
-        defaultValue: "on",
-        choices: [
-            { value: "on", label: "Anyone", icon: "quote.bubble" },
-            { value: "off", label: "Nobody", icon: "nosign" }
-        ]
-    });
+    if (actionId != "edit") {
+        attributes.push({
+            name: "allowQuotes",
+            label: "Who can quote",
+            defaultValue: "on",
+            choices: [
+                { value: "on", label: "Anyone", icon: "quote.bubble" },
+                { value: "off", label: "Nobody", icon: "nosign" }
+            ]
+        });
+    }
     attributes.push({ name: "language", type: "language" });
     return attributes;
 }
@@ -1158,63 +1294,73 @@ async function performAction(actionId, target, actionValue) {
         await fetch.post(`${site}/xrpc/com.atproto.repo.deleteRecord`, { json: body });
         return [Item.delete(target.uri)];
     }
-    else if (actionId == "reply" || actionId == "newPost" || actionId == "quote") {
+    else if (actionId == "reply" || actionId == "newPost" || actionId == "quote" || actionId == "edit") {
         return composeDraft(actionId, target, metadata);
     }
     else if (actionId == "send") {
         // Here `target` is the draft. Create the post; nothing to return (createRecord only yields {uri, cid}).
         const draft = target;
-        const attributes = draft.attributeValues ?? {};
         const createdAt = new Date().toISOString();
-        const record = {
-            "$type": "app.bsky.feed.post",
-            text: draft.body,
-            createdAt: createdAt,
-        };
-        if (attributes.language != null) { record.langs = [attributes.language]; }
-        if (draft.metadata.parentUri != null) {
-            record.reply = {
-                root: { uri: draft.metadata.rootUri, cid: draft.metadata.rootCid },
-                parent: { uri: draft.metadata.parentUri, cid: draft.metadata.parentCid },
-            };
-        }
-        // The post's ONE media embed is a video, image set, or link card (mutually exclusive); a quote is a `record`
-        // embed. Media + quote combine via `recordWithMedia`; either can stand alone. Route by each media's `mediaType`.
-        const mediaAttachments = (draft.attachments ?? []).filter(a => a?.kind === "media");
-        const videoAttachment = mediaAttachments.find(a => a.mediaType === "video");
-        const imageAttachments = mediaAttachments.filter(a => a.mediaType === "image");
-        const linkAttachment = (draft.attachments ?? []).find(a => a?.kind === "link");
-        let mediaEmbed = null;
-        if (videoAttachment != null) {
-            mediaEmbed = await buildVideoEmbed(videoAttachment);
-        } else if (imageAttachments.length > 0) {
-            mediaEmbed = await buildImagesEmbed(imageAttachments);
-        } else if (linkAttachment != null) {
-            mediaEmbed = await buildExternalEmbed(linkAttachment);
-        }
-        if (draft.metadata.quoteUri != null) {
-            const quoteEmbed = { "$type": "app.bsky.embed.record", record: { uri: draft.metadata.quoteUri, cid: draft.metadata.quoteCid } };
-            record.embed = mediaEmbed != null
-                ? { "$type": "app.bsky.embed.recordWithMedia", record: quoteEmbed, media: mediaEmbed }
-                : quoteEmbed;
-        } else if (mediaEmbed != null) {
-            record.embed = mediaEmbed;
-        }
-        const facets = await buildFacets(draft.body);
-        if (facets.length > 0) { record.facets = facets; }
+        const record = await buildPostRecord(draft, createdAt);
         const rkey = draft.metadata.rkey;
-            // Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
-            // do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
-            // rkey is known ahead, so the gates can reference the post URI in the same batch. We deliberately DON'T pass
-            // `validate: true`: with atproto's default optimistic validation, a self-hosted/older PDS that doesn't know
-            // a lexicon (a threadgate, or a gallery embed) stores the record fail-open instead of rejecting it — the
-            // AppView is the authority on render. Forcing validation would break exactly those arbitrary-PDS setups.
-            const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
-            const writes = [
-                { "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
-                ...gateWrites(attributes, postUri, rkey, createdAt, draft.metadata.parentUri != null),
-            ];
-            await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+        // Post + its reply/quote gates go up as ONE atomic `applyWrites` transaction (all commit together or none
+        // do), so the post can never appear without its gates and a failure creates nothing — the client-chosen
+        // rkey is known ahead, so the gates can reference the post URI in the same batch. We deliberately DON'T pass
+        // `validate: true`: with atproto's default optimistic validation, a self-hosted/older PDS that doesn't know
+        // a lexicon (a threadgate, or a gallery embed) stores the record fail-open instead of rejecting it — the
+        // AppView is the authority on render. Forcing validation would break exactly those arbitrary-PDS setups.
+        const postUri = `at://${did}/app.bsky.feed.post/${rkey}`;
+        const writes = [
+            { "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
+            ...gateWrites(draft.attributeValues ?? {}, postUri, rkey, createdAt, draft.metadata.parentUri != null),
+        ];
+        await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+    }
+    else if (actionId == "saveEdit") {
+        // Here `target` is the draft `edit` seeded. A post is a record in your own repo, so `putRecord` DOES
+        // overwrite it — but the AppView deliberately ignores an update to a post, so the edit lands on the PDS and
+        // nobody ever sees it (verified against the live network: the PDS served the new text while the AppView
+        // went on serving the old one, with `indexedAt` never moving). What the AppView does honour is a delete
+        // followed by a create, so that's what an edit is here. Both ride in ONE atomic `applyWrites` commit at the
+        // post's own rkey: the PDS emits the two ops literally rather than folding them into the update that would
+        // be dropped, there's no moment where the post is missing, and reusing the rkey keeps the post's URI and so
+        // its permalink. Re-sending the original `createdAt` keeps it in place chronologically too — the feed sorts
+        // by the earlier of that and the new index time. The record is rewritten WHOLE, so anything the draft
+        // doesn't carry is gone, which is what `composeDraft` seeds for.
+        //
+        // The cost is that to the AppView this genuinely IS a new post: its likes and reposts don't come with it,
+        // and anyone the post replies to or mentions gets notified again. That's the price of Bluesky not
+        // supporting editing, not something the connector can work around.
+        const draft = target;
+        const rkey = draft.metadata.rkey;
+        const record = await buildPostRecord(draft, draft.metadata.createdAt);
+        const writes = [
+            { "$type": "com.atproto.repo.applyWrites#delete", collection: "app.bsky.feed.post", rkey: rkey },
+            { "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
+        ];
+        await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+
+        // Read the post back rather than synthesising the result, so what reaches the timeline is what everyone
+        // else sees. That means waiting out TWO steps, not one. The cid changing only says the record was indexed;
+        // its embed hydrates separately and a little later, so a post read in between comes back with its media
+        // missing — and writing THAT over a good item is worse than writing nothing at all, because the bad item
+        // then sits there looking like the edit dropped the attachment. So when the record we just wrote has an
+        // embed, wait for the AppView to have one too. Give up quietly past a few seconds: hydration lag is
+        // unbounded, and returning nothing just leaves the next refresh to place it.
+        const uri = `at://${did}/app.bsky.feed.post/${rkey}`;
+        const expectsEmbed = record.embed != null;
+        try {
+            const view = await poll(async () => {
+                const found = (await fetch(`${site}/xrpc/app.bsky.feed.getPosts?uris=${encodeURIComponent(uri)}`).json()).posts?.[0];
+                if (found == null || found.cid == draft.metadata.cid) { return null; }
+                return (!expectsEmbed || found.embed != null) ? found : null;
+            }, { interval: 500, max: 1500, timeout: 5000 });
+            const post = postForItem({ post: view }, true);
+            return post != null ? [post] : [];
+        } catch (error) {
+            console.log(`edit committed, but the AppView hasn't caught up: ${error}`);
+            return [];
+        }
     }
     else {
         throw new Error(`actionId "${actionId}" not implemented`);

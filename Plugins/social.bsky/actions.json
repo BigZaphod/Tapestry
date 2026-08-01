@@ -46,6 +46,12 @@
             "icon": "tapestry.bookmark.fill"
         },
         {
+            "id": "edit",
+            "name": "Edit Post",
+            "icon": "pencil",
+            "role": "compose"
+        },
+        {
             "id": "delete",
             "name": "Delete Post",
             "icon": "trash",
@@ -69,6 +75,10 @@
             "id": "send",
             "name": "Post",
             "icon": "paperplane"
+        },
+        {
+            "id": "saveEdit",
+            "name": "Update"
         }
     ],
     "feeds": [
