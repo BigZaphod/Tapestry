@@ -677,9 +677,11 @@ async function fitMedia(file, kind) {
     const maxBytes = m.video_size_limit ?? 103809024;                           // 99 MiB (media_attachment.rb VIDEO_LIMIT)
     const maxPixels = Math.floor(Math.sqrt(m.video_matrix_limit ?? 8294400));   // matrix (w×h, 4K default) → longest edge
     if (kind == "video") { return videoTransform(file, ["mp4"], { maxBytes, maxPixels }); }
-    // Animation accepts GIF too, listed after mp4: a fitting GIF passes through untouched (Mastodon makes the looping
-    // gifv itself — no lossy H.264 transcode), while a silent-video-classified animation still goes to mp4.
-    if (kind == "animation") { return animationTransform(file, ["mp4", "gif"], { maxBytes, maxPixels }); }
+    // Animation → always mp4 (a silent H.264 that Mastodon serves back as a looping gifv), never gif. Mastodon transcodes
+    // every uploaded gif to gifv anyway, so keeping it a gif gains the viewer nothing — and a gif is bigger on the wire
+    // AND, as image/gif, bounded by the tighter IMAGE limit, where an mp4 (video) gets the full video_size_limit. So mp4
+    // is the smaller, faster upload with the larger byte budget. A source that's already a silent mp4 is preserved as-is.
+    if (kind == "animation") { return animationTransform(file, ["mp4"], { maxBytes, maxPixels }); }
     throw new Error(`Can't upload media of kind "${kind}"`);
 }
 
