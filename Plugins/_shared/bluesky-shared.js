@@ -122,9 +122,11 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         // Bluesky always supports quoting (the target post's own postgate may still reject it — the server enforces
         // that at send, surfaced as an error). Grouped with repost/unrepost so they share one cell button.
         actions.push("quote");
-        if (item.post.viewer?.bookmarked != null) {
-            actions.push(item.post.viewer?.bookmarked == false ? "save" : "unsave");
-        }
+        // A null `bookmarked` means the viewer state simply isn't loaded (a fresh post, or an eventually-consistent
+        // first fetch right after posting), NOT that bookmarking is forbidden — there's no bookmark-disabled signal in
+        // the lexicon, and the only thing that can't be bookmarked is a non-post record, which a timeline item never is.
+        // So treat unknown as "not bookmarked" and offer to save, the way Mastodon does.
+        actions.push(item.post.viewer?.bookmarked === true ? "unsave" : "save");
         // Only your own posts can be edited or deleted. "didSelf" is the authenticated account's DID, stored at login.
         const didSelf = getItem("didSelf");
         if (didSelf != null && author.did == didSelf) {
