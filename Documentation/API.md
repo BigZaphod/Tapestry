@@ -1395,7 +1395,7 @@ Fits an image [`FileAsset`](#fileasset) to a set of acceptable formats and size 
 Use it to fit an image to a service's requirements before uploading — both **local** picked media (inside [`uploadAttachment`](#uploadattachment), or at submit in `"deferred"` mode) and **remote** media you're re-hosting (download an image, fit it, upload it — for example a link-card thumbnail a server wants within certain dimensions or a byte limit).
 
   * asset: a [`FileAsset`](#fileasset) holding an image.
-  * formats: **required** — an `Array` of format names in preference order: `"jpeg"`, `"heic"`, `"png"`, `"gif"`. If the input is already one of them it's kept; otherwise it's converted to the **first**. Pinning the output is the point of the call, so there's no default — an empty array, or one holding only names Tapestry can't produce, **throws**.
+  * formats: **required** — an `Array` of format names in preference order: `"jpeg"`, `"heic"`, `"png"`, `"gif"`. An input that already qualifies (an accepted format, within every limit) is kept untouched. Anything re-encoded goes to the listed format best suited to the image — for an **opaque** image the first **lossy** one (it holds resolution instead of downscaling a lossless format into mush), for one with **real transparency** the first that can **carry alpha** (never flattened onto a background). So with the usual `["jpeg", "png"]` an opaque image comes back jpeg while a transparent one stays png — don't assume the output format matches the input's. Pinning the output set is the point of the call, so there's no default — an empty array, or one holding only names Tapestry can't produce, **throws**.
   * options: `Object` (optional):
       * maxBytes: `Number` — the result is kept within this many bytes. Quality is lowered first (for `jpeg`/`heic`), then the image is downscaled, until it fits.
       * maxPixels: `Number` — the longest edge is capped to this many pixels.
@@ -1403,7 +1403,7 @@ Use it to fit an image to a service's requirements before uploading — both **l
 
 `maxBytes` and `maxPixels` both apply: `maxPixels` caps the dimensions, and `maxBytes` can shrink the image further, so a tight byte budget may bring the result back smaller than `maxPixels`.
 
-An **animated** input is flattened to its first frame — this is an image operation. The returned asset's `mimeType` tells you the format it actually produced (handy for the Content-Type on a subsequent upload).
+An **animated** input is flattened to its first frame — this is an image operation. You don't need to track which format it produced: uploading the returned asset applies the correct `Content-Type` automatically.
 
 It **throws** if the input isn't a decodable image, if `formats` is empty, or if the byte budget can't be met even at the smallest sensible size — so the caller can fall back (for instance, posting a link card without a thumbnail).
 
@@ -1456,7 +1456,7 @@ Because it always strips audio, this is the way to "narrow" a video into a sound
 Fits a [`FileAsset`](#fileasset) to an **audio** slot, resolving to a **new** `FileAsset`. A movie's audio track is **extracted**; audio is converted to AAC in an `.m4a` container. Throws if there's no audio track to take.
 
   * formats: **required** — `"m4a"`, the only audio format Tapestry can produce (MP3 encoding isn't available). An empty array **throws**.
-  * options: `{ maxBytes }` — re-encode to fit within this many bytes.
+  * options: `{ maxBytes }` — re-encode to fit within this many bytes, picking a bitrate from the budget so the **whole** clip fits: a long clip drops in quality rather than being cut short. A budget too small to hit at a usable bitrate **throws** (so you can fall back), like [`videoTransform`](#videotransform).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
