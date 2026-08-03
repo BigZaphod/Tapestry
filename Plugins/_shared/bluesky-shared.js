@@ -1,6 +1,11 @@
 
 // social.bsky - shared
 
+// The synced @/# usage history (remember/recent/HISTORY_*) lives in its own shared resource.
+if (require('suggest-history.js') === false) {
+    throw new Error("Failed to load suggest-history.js");
+}
+
 const uriPrefix = "https://bsky.app";
 const uriPrefixContent = "https://cdn.bsky.app";
 const uriPrefixVideo = "https://video.bsky.app";
@@ -132,6 +137,10 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         if (didSelf != null && author.did == didSelf) {
             actions.push("edit");
             actions.push("delete");
+            // Your own post: fold its mentions/tags into the autocomplete history, dated by the post (remember keeps
+            // each value's newest use). This is what seeds the picker from posts you made before this existed or on
+            // another client.
+            learnFromText(item.post.record?.text ?? "", new Date(item.post.indexedAt ?? 0).getTime() || 0);
         }
     }
     actions.push(item.post?.replyCount > 0 ? "replies" : "thread");
@@ -956,9 +965,9 @@ async function composeDraft(actionId, target, metadata) {
         characterCounter: { fields: ["body"], characterLimit: { maxLength: 300, maxBytes: 3000 } },
         fields: { body: { placeholder: actionId == "reply" ? "Write your reply" : "What's up?" } },
         attributes: composeAttributes(actionId),
-        // @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so
-        // `#` isn't offered.
-        suggestions: ["@"],
+        // @-mentions autocomplete via the suggest() verb (actor typeahead). Bluesky has no hashtag-suggest API, so `#`
+        // is history-only — it offers the tags you've used before rather than searching the network (see suggestHashtags).
+        suggestions: ["@", "#"],
         // A post carries ONE embed — a link card, an image set, or a video (mutually exclusive) — and may ALSO quote
         // another post (recordWithMedia combines a quote with one of those). So `media` and `quote` are separate slots
         // that can coexist. Bluesky has no animated-image type, so a picked animation is offered as a video.
@@ -1133,25 +1142,93 @@ function gateWrites(attributes, postUri, rkey, createdAt, isReply) {
     return writes;
 }
 
-// @-mention autocomplete. A bare "@" (no query yet) returns nothing. The inserted "@handle" is resolved to a DID by
-// buildFacets at send.
+// Learn the @mentions and #hashtags in some post text — the composed body (dated now), or one of your own posts as it
+// loads (dated by the post; the caller gates on authorship). Both are pulled by regex from the plain text, so they
+// keep the casing you typed. The mention pattern mirrors buildFacets (atproto handles are a-z 0-9 . -, may follow
+// "("); a trailing dot is sentence punctuation, not part of the handle.
+function learnFromText(text, date) {
+    const mentions = [...(text ?? "").matchAll(/(?<![^\s(])@([a-zA-Z0-9.-]+)/gu)].map(match => ({ value: match[1].replace(/\.+$/, ""), date }));
+    const hashtags = [...(text ?? "").matchAll(/(?<![^\s])[#＃]([\p{L}\p{N}_]+)/gu)].map(match => ({ value: match[1], date }));
+    remember("mentionHistory", mentions);
+    remember("tagHistory", hashtags);
+}
+
+// Autocomplete for the `@`/`#` markers. A bare marker (no query yet) offers your recent-usage history instead of a
+// live search. Bluesky has no hashtag-search API at all, so `#` is history-only — see suggestHashtags.
 async function suggest(match) {
     const marker = match[0];
-    const query = match.slice(1);   // drop the marker; "" for a bare "@"
+    const query = match.slice(1);   // drop the marker; "" for a bare "@" / "#"
     if (marker === "@") { return await suggestAccounts(query); }
+    if (marker === "#") { return suggestHashtags(query); }
     return [];
 }
 
-// Actor typeahead via app.bsky.actor.searchActorsTypeahead. `handle` is the full domain handle ("alice.bsky.social")
-// — exactly the mention text to insert; displayName may be absent (the composer falls back to the handle).
+// Profiles already looked up this session — "@handle" (lowercased) -> { description, image }. Nothing here is ever
+// stored; it exists so reopening the popup or typing more of a handle doesn't refetch profiles hydrated moments ago
+// (and so an already-shown avatar never flickers away mid-word). An entry whose lookup found nothing still counts as
+// looked-up, so a renamed/deleted handle isn't re-queried on every keystroke.
+const profileCache = new Map();
+
+// @-mention autocomplete, one flow for the bare and typed cases: build the row list — your recent mentions first (all
+// of them for a bare "@", the prefix matches for a typed query), then live server results for a typed query, deduped
+// (a server hit for a handle already surfaced from history enriches that row's name/avatar rather than duplicating it)
+// — then hydrate whatever this session hasn't looked up yet in ONE getProfiles batch. Your recent mentions always lead
+// (in recency order); a partial query never lets a coincidental server match jump the queue, so heading for "@gedeonm"
+// isn't hijacked by some "@gedeon" — tap down for that. The bare "@" typically pays the one hydrate batch; after that
+// the cache means a keystroke costs just its typeahead call.
 async function suggestAccounts(query) {
-    if (query.length === 0) { return []; }
-    const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
-    return (result.actors ?? []).map(actor => ({
-        value: "@" + actor.handle,
-        description: actor.displayName,
-        image: actor.avatar
-    }));
+    const rows = [];
+    const byValue = new Map();
+    const add = row => {
+        const key = row.value.toLowerCase();
+        const existing = byValue.get(key);
+        if (existing == null) { byValue.set(key, row); rows.push(row); }
+        else if (existing.image == null && row.image != null) { existing.description = row.description; existing.image = row.image; }
+    };
+
+    for (const entry of recent("mentionHistory", query)) { const value = "@" + entry.value; add({ value, ...profileCache.get(value.toLowerCase()) }); }
+
+    if (query.length > 0) {
+        const result = await fetch(`${site}/xrpc/app.bsky.actor.searchActorsTypeahead?q=${encodeURIComponent(query)}`).json();
+        for (const actor of (result.actors ?? [])) {
+            const row = { value: "@" + actor.handle, description: actor.displayName, image: actor.avatar };
+            profileCache.set(row.value.toLowerCase(), { description: row.description, image: row.image });
+            add(row);
+        }
+    }
+
+    await hydrateHandles(rows);
+    return rows;
+}
+
+// Fill the CURRENT name/avatar into any rows this session hasn't looked up yet (your history rows), mutating them in
+// place, via one app.bsky.actor.getProfiles batch by handle — so a changed profile always shows and nothing about it
+// is stored. The slice keeps the batch within getProfiles' 25-actor limit; if a short prefix matches more history
+// than that, the overflow rows just show plain for now and hydrate (via the cache) on a later call. A handle that
+// doesn't come back (renamed/deleted) keeps its plain "@handle" row, cached so it isn't asked about again.
+// Best-effort: suggest() must never throw at the composing user, so a failed batch simply leaves the plain rows —
+// and caches nothing, so a transient failure retries on the next call.
+async function hydrateHandles(rows) {
+    const pending = rows.filter(row => !profileCache.has(row.value.toLowerCase())).slice(0, HISTORY_SHOW);
+    if (pending.length === 0) { return; }
+    try {
+        const params = pending.map(row => "actors=" + encodeURIComponent(row.value.slice(1))).join("&");
+        const profiles = (await fetch(`${site}/xrpc/app.bsky.actor.getProfiles?${params}`).json()).profiles ?? [];
+        const byHandle = new Map(profiles.map(profile => ["@" + profile.handle.toLowerCase(), profile]));
+        for (const row of pending) {
+            const profile = byHandle.get(row.value.toLowerCase());
+            if (profile != null) { row.description = profile.displayName; row.image = profile.avatar; }
+            profileCache.set(row.value.toLowerCase(), { description: row.description, image: row.image });
+        }
+    } catch (error) {
+        // best-effort: leave the plain rows as-is
+    }
+}
+
+// Hashtag autocomplete. Bluesky has no hashtag-search API, so this is purely your own recent tags: a bare "#" offers
+// the most recent, and typing filters them by prefix, most-recent first. Nothing to show until you've used some.
+function suggestHashtags(query) {
+    return recent("tagHistory", query).map(entry => ({ value: "#" + entry.value }));
 }
 
 async function performAction(actionId, target, actionValue) {
@@ -1324,6 +1401,9 @@ async function performAction(actionId, target, actionValue) {
             ...gateWrites(draft.attributeValues ?? {}, postUri, rkey, createdAt, draft.metadata.parentUri != null),
         ];
         await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+        // Bluesky's send returns nothing and a reply never comes back to your timeline, so this is the only place the
+        // post is seen: fold its mentions/tags into the autocomplete history here, dated now.
+        learnFromText(draft.body, Date.now());
     }
     else if (actionId == "saveEdit") {
         // Here `target` is the draft `edit` seeded. A post is a record in your own repo, so `putRecord` DOES
@@ -1348,6 +1428,7 @@ async function performAction(actionId, target, actionValue) {
             { "$type": "com.atproto.repo.applyWrites#create", collection: "app.bsky.feed.post", rkey: rkey, value: record },
         ];
         await fetch.post(`${site}/xrpc/com.atproto.repo.applyWrites`, { json: { repo: did, writes: writes } });
+        learnFromText(draft.body, Date.now());   // an edit is a fresh use of its mentions/tags — date them now
 
         // Read the post back rather than synthesising the result, so what reaches the timeline is what everyone
         // else sees. That means waiting out TWO steps, not one. The cid changing only says the record was indexed;

@@ -1,6 +1,11 @@
 
 // org.joinmastodon - shared
 
+// The synced @/# usage history (remember/recent/HISTORY_*) lives in its own shared resource.
+if (require('suggest-history.js') === false) {
+    throw new Error("Failed to load suggest-history.js");
+}
+
 function normalizeAccount(account) {
     let result = account.trim();
     if (result.length > 1 && result.startsWith("@")) {
@@ -155,6 +160,10 @@ function postForItem(item) {
     if (myUserId != null && account?.id == myUserId) {
         post.actions.add("delete");
         post.actions.add("edit");
+        // Your own post: fold its mentions/tags into the autocomplete history, dated by the post (remember keeps
+        // each value's newest use). This is what seeds the picker from posts you made before this existed or on
+        // another client.
+        learnFromPost(item);
     }
 
     let attachments = [];
@@ -565,8 +574,8 @@ async function replyMentionPrefill(id) {
     return tokens.length > 0 ? tokens.join(" ") + " " : "";
 }
 
-// Autocomplete for the `@`/`#` markers: branch on the marker. A bare marker (no query yet) returns nothing rather
-// than dumping a huge list.
+// Autocomplete for the `@`/`#` markers: branch on the marker. A bare marker (no query yet) offers your recent-usage
+// history instead of a live search, since there's nothing to search on yet.
 async function suggest(match) {
     const marker = match[0];
     const query = match.slice(1);   // drop the marker; "" for a bare "@" / "#"
@@ -575,30 +584,87 @@ async function suggest(match) {
     return [];
 }
 
-// Account autocomplete via /api/v1/accounts/search (authenticated). We rely on the endpoint's default of NOT resolving
-// unknown handles: leaving `resolve` off means no per-keystroke WebFinger fetch — only locally known accounts are
-// searched. `acct` is "user" locally or "user@domain" for a remote account — exactly the mention text to insert.
+// Accounts already looked up this session — "@acct" (lowercased) -> { description, image }. Nothing here is ever
+// stored; it exists so reopening the popup or typing more of a handle doesn't refetch accounts hydrated moments ago
+// (and so an already-shown avatar never flickers away mid-word). An entry whose lookup found nothing still counts as
+// looked-up, so a moved/deleted account isn't re-queried on every keystroke.
+const profileCache = new Map();
+
+// @-mention autocomplete, one flow for the bare and typed cases: build the row list — your recent mentions first (all
+// of them for a bare "@", the prefix matches for a typed query), then live server results from /accounts/search for a
+// typed query, deduped (a server hit for an acct already surfaced from history enriches that row's name/avatar rather
+// than duplicating it) — then hydrate whatever this session hasn't looked up yet in ONE batch. Your recent mentions
+// always lead (in recency order); a partial query never lets a coincidental server match jump the queue, so heading
+// for "@gedeonm" isn't hijacked by some "@gedeon" — tap down for that. The bare "@" typically pays the one hydrate
+// batch; after that the cache means a keystroke costs just its search call.
+//
+// The search endpoint's default of NOT resolving unknown handles keeps it to locally known accounts (no per-keystroke
+// WebFinger fetch). `acct` is "user" locally or "user@domain" for a remote account — exactly the mention text to insert.
 async function suggestAccounts(query) {
-    if (query.length === 0) { return []; }
-    const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
-    return accounts.map(account => ({
-        value: "@" + account.acct,
-        description: account.display_name || account.username,
-        image: account.avatar
-    }));
+    const rows = [];
+    const byValue = new Map();
+    const idByValue = new Map();   // "@acct" (lowercased) -> account id, for hydrating history rows by id
+    const add = row => {
+        const key = row.value.toLowerCase();
+        const existing = byValue.get(key);
+        if (existing == null) { byValue.set(key, row); rows.push(row); }
+        else if (existing.image == null && row.image != null) { existing.description = row.description; existing.image = row.image; }
+    };
+
+    for (const entry of recent("mentionHistory", query)) {
+        const value = "@" + entry.value;
+        if (entry.id != null) { idByValue.set(value.toLowerCase(), entry.id); }
+        add({ value, ...profileCache.get(value.toLowerCase()) });
+    }
+
+    if (query.length > 0) {
+        const accounts = await fetch(`${site}/api/v1/accounts/search?q=${encodeURIComponent(query)}`).json();
+        for (const account of accounts) {
+            const row = { value: "@" + account.acct, description: account.display_name || account.username, image: account.avatar };
+            profileCache.set(row.value.toLowerCase(), { description: row.description, image: row.image });
+            add(row);
+        }
+    }
+
+    await hydrateAccounts(rows, idByValue);
+    return rows;
+}
+
+// Fill the CURRENT name/avatar into any history rows this session hasn't looked up yet (mutating them in place) via
+// ONE /api/v1/accounts?id[]= batch — so a changed profile shows immediately, nothing about it is stored, and we don't
+// fire a request per row at a shared instance. The slice keeps the batch modest; if a short prefix matches more
+// history than that, the overflow rows just show plain for now and hydrate (via the cache) on a later call. An id
+// that doesn't come back (moved/deleted) keeps its plain "@acct" row, cached so it isn't asked about again. The batch
+// endpoint is Mastodon 4.3+; on an older server it 404s — caught below, and nothing is cached on failure, so a
+// transient hiccup retries on the next call. Best-effort: suggest() must never throw.
+async function hydrateAccounts(rows, idByValue) {
+    const pending = rows.filter(row => idByValue.has(row.value.toLowerCase()) && !profileCache.has(row.value.toLowerCase())).slice(0, HISTORY_SHOW);
+    if (pending.length === 0) { return; }
+    try {
+        const params = pending.map(row => "id[]=" + encodeURIComponent(idByValue.get(row.value.toLowerCase()))).join("&");
+        const byId = new Map(((await fetch(`${site}/api/v1/accounts?${params}`).json()) ?? []).map(account => [account.id, account]));
+        for (const row of pending) {
+            const account = byId.get(idByValue.get(row.value.toLowerCase()));
+            if (account?.acct != null) { row.description = account.display_name || account.username; row.image = account.avatar; }
+            profileCache.set(row.value.toLowerCase(), { description: row.description, image: row.image });
+        }
+    } catch (error) {
+        // Pre-4.3 instance (no batch endpoint) or a transient failure — leave the plain rows as-is.
+    }
 }
 
 // Hashtag autocomplete via /api/v2/search?type=hashtags (authenticated). Hashtags carry no image (the composer falls
 // back to a symbol). The server's `tag.name` is often LOWERCASED (mastodon.social returns "tapestryapp" for what its
 // own web UI shows as "TapestryApp") — because that mixed casing comes from each user's LOCAL tag history, not the
 // API. So we do the same: a most-recent-first history of tags YOU'VE posted (with your casing) is merged ahead of the
-// server results and deduped case-insensitively, so a tag you use shows with your casing. See rememberHashtags.
+// server results and deduped case-insensitively, so a tag you use shows with your casing. See learnFromPost.
 // The API's tag.history gives recent-usage counts, surfaced as each row's description line (keyed by lowercased name,
-// so a history-cased tag still picks up the server's count); history-only tags with no API match show no count.
+// so a history-cased tag still picks up the server's count); history-only tags with no API match show no count. A bare
+// "#" has nothing to search, so it offers your recent tags alone.
 async function suggestHashtags(query) {
-    if (query.length === 0) { return []; }
+    if (query.length === 0) { return recent("tagHistory", "").map(entry => ({ value: "#" + entry.value })); }
     const results = await fetch(`${site}/api/v2/search?q=${encodeURIComponent(query)}&type=hashtags`).json();
-    const history = historyHashtags(query);
+    const history = recent("tagHistory", query).map(entry => entry.value);
     const seen = new Set(history.map(tag => tag.toLowerCase()));
     const names = [...history];
     const descriptions = new Map();
@@ -621,35 +687,22 @@ function usageDescription(tag) {
     return `${total.toLocaleString()} recent ${total === 1 ? "post" : "posts"}`;
 }
 
-// A most-recent-first history of hashtags you've posted, preserving your casing — the same trick the Mastodon web
-// composer uses (its search returns lowercased tags; the casing lives only in your own history). Deduped
-// case-insensitively, capped, stored synced. Best-effort — a hiccup here must never fail a post that already succeeded.
-const TAG_HISTORY_MAX = 100;
-
-function rememberHashtags(text) {
-    try {
-        const used = [...(text ?? "").matchAll(/(?<![^\s])[#＃]([\p{L}\p{N}_]+)/gu)].map(match => match[1]);
-        if (used.length === 0) { return; }
-        let history = JSON.parse(getItem("tagHistory", true) ?? "[]");
-        for (const tag of used.reverse()) {   // reverse so the first tag typed ends up nearest the front
-            history = history.filter(existing => existing.toLowerCase() !== tag.toLowerCase());
-            history.unshift(tag);
-        }
-        setItem("tagHistory", JSON.stringify(history.slice(0, TAG_HISTORY_MAX)), true);
-    } catch (error) {
-        console.log(`rememberHashtags failed (non-fatal): ${error}`);
-    }
+// The bare hashtag names in some text, preserving the author's casing. The lookbehind keeps a "#" that begins a word
+// (matching the composer's own tokenizing) while skipping a "#" mid-URL like example.com/#frag.
+function hashtagsIn(text) {
+    return [...(text ?? "").matchAll(/(?<![^\s])[#＃]([\p{L}\p{N}_]+)/gu)].map(match => match[1]);
 }
 
-// The remembered tags whose casing-insensitive prefix matches what the user is typing — merged ahead of the API
-// results by suggestHashtags. Degrades to none on any storage/parse hiccup (a real fallback: the API still answers).
-function historyHashtags(query) {
-    try {
-        const lowerQuery = query.toLowerCase();
-        return JSON.parse(getItem("tagHistory", true) ?? "[]").filter(tag => tag.toLowerCase().startsWith(lowerQuery));
-    } catch (error) {
-        return [];
-    }
+// Learn the mentions and hashtags in one of YOUR OWN posts (the caller gates on authorship), dated by the post —
+// edited_at when present, so an edit counts as a fresh use (which also dates the send/saveEdit feeders correctly:
+// the status they pass was just created or edited, so its date IS "now"). Mentions come from the structured
+// `mentions` list because its `acct` carries the full user@domain a remote handle needs and its `id` lets the
+// bare-"@" popup batch-hydrate the avatar; hashtags are read from the rendered text with tags stripped, so they keep
+// the casing you typed rather than the API's lowercased `tags[].name`.
+function learnFromPost(status) {
+    const date = new Date(status.edited_at ?? status.created_at ?? 0).getTime() || 0;
+    remember("mentionHistory", (status.mentions ?? []).map(mention => ({ value: mention.acct, id: mention.id, date })));
+    remember("tagHistory", hashtagsIn((status.content ?? "").replace(/<[^>]+>/g, "")).map(tag => ({ value: tag, date })));
 }
 
 // Fit + upload one attachment's bytes to /v2/media, returning its { id }. POST /v2/media returns 200 for images
@@ -843,7 +896,7 @@ async function performAction(actionId, target, actionValue) {
             "Idempotency-Key": draft.metadata?.idempotencyKey ?? crypto.randomUUID(),
         };
         const status = await fetch.post(`${site}/api/v1/statuses`, { json: body, headers: headers }).json();
-        rememberHashtags(draft.body);   // remember the tags you just used (with your casing) for future autocomplete
+        learnFromPost(status);   // fold the mentions/tags you just used into the autocomplete history
         return [postForItem(status)];
     }
     else if (actionId == "saveEdit") {
@@ -889,7 +942,7 @@ async function performAction(actionId, target, actionValue) {
             quote_approval_policy: attributes.quotePolicy
         };
         const status = await fetch(`${site}/api/v1/statuses/${draft.metadata?.id}`, { method: "PUT", json: body }).json();
-        rememberHashtags(draft.body);
+        learnFromPost(status);
         // The edited post is already in the catalog, so this updates it in place rather than adding a new item.
         return [postForItem(status)];
     }

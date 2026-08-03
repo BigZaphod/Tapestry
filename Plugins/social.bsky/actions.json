@@ -48,7 +48,7 @@
         {
             "id": "edit",
             "name": "Edit Post",
-            "icon": "pencil",
+            "icon": "square.and.pencil",
             "role": "compose",
             "priority": "secondary"
         },
