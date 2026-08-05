@@ -504,6 +504,18 @@ function postForItem(item) {
     return post;
 }
 
+// Pick the best thumbnail to use based on a max pixel size. Don't use the `poster` - they aren't animated.
+function thumbnailUrlForImage(media) {
+    const targetPixels = 1024;
+    const smaller = media.slice(1).filter((m) => m != null && m.url != null)
+        .sort((a, b) => Math.max(a.width, a.height) - Math.max(b.width, b.height));
+    if (smaller.length === 0) {
+        return null; // only the original size was offered — no separate thumbnail
+    }
+    const pick = smaller.find((m) => Math.max(m.width, m.height) >= targetPixels) ?? smaller[smaller.length - 1];
+    return pick.url;
+}
+
 function processContentBlocks(contentBlocks, contentLayouts) {
     let body = "";
     let attachments = [];
@@ -537,7 +549,6 @@ function processContentBlocks(contentBlocks, contentLayouts) {
         case "image":
             if (contentBlock.media != null && contentBlock.media.length > 0) {
                 const mediaProperties = contentBlock.media[0];
-                const posterProperties = mediaProperties.poster;
 
                 const attachment = MediaAttachment.createWithUrl(mediaProperties.url);
                 if (contentBlock.alt_text != null) {
@@ -545,8 +556,9 @@ function processContentBlocks(contentBlocks, contentLayouts) {
                 }
                 attachment.mediaType = "image";
                 attachment.aspectSize = {width: mediaProperties.width, height: mediaProperties.height};
-                if (posterProperties != null) {
-                    attachment.thumbnail = posterProperties.url;
+                const thumbnailUrl = thumbnailUrlForImage(contentBlock.media);
+                if (thumbnailUrl != null) {
+                    attachment.thumbnail = thumbnailUrl;
                 }
                 attachments.push(attachment);
             }
