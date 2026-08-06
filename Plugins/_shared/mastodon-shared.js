@@ -53,12 +53,6 @@ function postForItem(item) {
         item = item["reblog"];
     }
 
-    // Items boosted by the authenticated account override the annotation.
-    if (item?.reblogged) {
-        annotation = Annotation.createWithText("Boosted by you");
-        annotation.uri = item.account["url"];
-    }
-
     const uri = item["url"];
     const post = Item.createWithUriDate(uri, postDate);
 
@@ -790,14 +784,12 @@ async function performAction(actionId, target, actionValue) {
         await fetch.post(`${site}/api/v1/statuses/${id}/reblog`);
         target.actions.delete("boost");
         target.actions.add("unboost");
-        target.annotations = [Annotation.createWithText("Boosted by you")];
         return target;
     }
     else if (actionId == "unboost") {
         await fetch.post(`${site}/api/v1/statuses/${id}/unreblog`);
         target.actions.delete("unboost");
         target.actions.add("boost");
-        target.annotations = [];
         return target;
     }
     else if (actionId == "bookmark") {
@@ -822,7 +814,11 @@ async function performAction(actionId, target, actionValue) {
         for (const item of context["ancestors"]) {
             results.push(postForItem(item));
         }
-        results.push(target);
+        // Fetch the target fresh rather than echoing `target` back: the echo is frozen at tap time, so a
+        // vote or state change made while the thread is open would revert when the thread reloads. The
+        // /context endpoint doesn't include the status itself, hence the extra request.
+        const status = await fetch(`${site}/api/v1/statuses/${id}`).json();
+        results.push(postForItem(status));
         for (const item of context["descendants"]) {
             results.push(postForItem(item));
         }
