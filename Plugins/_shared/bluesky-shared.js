@@ -151,36 +151,41 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         contentWarning = `Labeled: ${labels}`;
     }
     
-    let annotation = null;
-    
-    let replyContent = null;
+    let annotations = [];
+
     if (item.reply != null) {
-        annotation = annotationForReply(item);
-        if (item.post.author.handle != item.reply.parent?.author?.handle) {					
-            replyContent = contentForReply(item.reply);
-            if (replyContent != null) {
-                content = replyContent + content;
-            }
+        const replyAnnotation = annotationForReply(item);
+        if (replyAnnotation != null) {
+            annotations.push(replyAnnotation);
         }
     }
-	
-    const repostContent = contentForRepost(item.reason);
-    if (repostContent != null) {
+
+    // A reply for filtering purposes has a parent by a DIFFERENT author — a self-thread continuation doesn't count.
+    const isReply = item.reply?.parent != null && item.post.author.handle != item.reply.parent?.author?.handle;
+    const isRepost = item.reason != null && item.reason.$type == "app.bsky.feed.defs#reasonRepost";
+
+    if (isRepost) {
         if (item.reason.indexedAt != null) {
             date = new Date(item.reason.indexedAt);
         }
-        annotation = annotationForRepost(item.reason);
-        content = repostContent + content;
+        // The repost annotation leads: it explains why the post is in the timeline at all. The reply annotation
+        // (linking the parent's author) is the only remaining reply context — the parent's text is deliberately
+        // NOT blockquoted into the body anymore, because body must be identical however the post is fetched
+        // (timeline, thread, action echo) or reimports rewrite it; the thread itself is one tap away.
+        const repostAnnotation = annotationForRepost(item.reason);
+        if (repostAnnotation != null) {
+            annotations.unshift(repostAnnotation);
+        }
     }
 
     let showItem = true;
     if (includeReposts != "on") {
-        if (repostContent != null) {
+        if (isRepost) {
             showItem = false;
         }
     }
     if (includeReplies != "on") {
-        if (replyContent != null && repostContent == null) { // show replies only if they are not reposted
+        if (isReply && !isRepost) { // show replies only if they are not reposted
             showItem = false;
         }
     }
@@ -206,8 +211,8 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         if (attachments != null) {
             post.attachments = attachments
         }
-        if (annotation != null) {
-            post.annotations = [annotation];
+        if (annotations.length > 0) {
+            post.annotations = annotations;
         }
         if (contentWarning != null) {
             post.contentWarning = contentWarning;
@@ -337,16 +342,6 @@ function annotationForRepost(reason) {
     return annotation;
 }
 
-function contentForRepost(reason) {
-    let content = null;
-
-    if (reason != null && reason.$type == "app.bsky.feed.defs#reasonRepost") {
-        content = "";
-    }
-    
-    return content;
-}
-
 function annotationForReply(item) {
     let annotation = null;
 
@@ -367,23 +362,6 @@ function annotationForReply(item) {
     }
     
     return annotation;
-}
-
-function contentForReply(reply) {
-    let content = null;
-
-    if (reply != null && reply.parent != null) {
-        const replyContent = contentForRecord(reply.parent.record);
-        const replyName = nameForAccount(reply.parent.author);
-        if (replyName != null) {
-            content = `<blockquote><p>${replyName} said:</p><p>${replyContent}</p></blockquote>`;
-        }
-        else {
-            content = `<blockquote><p>${replyContent}</p></blockquote>`;
-        }
-    }
-    
-    return content;
 }
 
 // Bluesky has no GIF embed type — the GIF picker posts an external link card pointing at the GIF host, and clients
