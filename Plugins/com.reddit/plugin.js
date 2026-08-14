@@ -1,6 +1,13 @@
 
 // com.reddit
 
+// Reddit 403s JSON requests from clients without session cookies. Loading any old.reddit.com
+// page sets them (loid/token_v2), and they persist in the app's cookie storage, so this is
+// only needed for the first request ever or after Reddit expires them.
+function acquireRedditCookies() {
+    return sendRequest("https://old.reddit.com/");
+}
+
 function normalizedSubreddit() {
     // Accept a bare name ("apple"), a path-style entry ("/r/apple", "r/apple"),
     // or even a full URL pasted from the address bar. Trim whitespace, strip a
@@ -25,6 +32,12 @@ function verify() {
     const name = normalizedSubreddit();
     const url = `${site}/r/${name}/about.json?raw_json=1`;
     sendRequest(url, "GET", null, null, true)
+    .then((text) => {
+        if (JSON.parse(text).status == 403) {
+            return acquireRedditCookies().then(() => sendRequest(url, "GET", null, null, true));
+        }
+        return text;
+    })
     .then((text) => {
         const response = JSON.parse(text);
         console.log(`response.status = ${response.status}`);
@@ -62,7 +75,9 @@ function verify() {
 function load() {
     const type = feedType.toLowerCase();
     const name = normalizedSubreddit();
-    sendRequest(`${site}/r/${name}/${type}.json?raw_json=1`, "GET")
+    const url = `${site}/r/${name}/${type}.json?raw_json=1`;
+    sendRequest(url, "GET")
+    .catch(() => acquireRedditCookies().then(() => sendRequest(url, "GET")))
     .then((text) => {
         const jsonObject = JSON.parse(text);
 		
