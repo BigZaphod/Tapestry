@@ -3,22 +3,26 @@
         {
             "id": "reblog",
             "name": "Reblog",
-            "icon": "tapestry.boost"
+            "icon": "tapestry.boost",
+            "semantic": "boost"
         },
         {
             "id": "unreblog",
             "name": "Reblogged",
-            "icon": "tapestry.boost.fill"
+            "icon": "tapestry.boost.fill",
+            "semantic": "boost"
         },
         {
             "id": "like",
             "name": "Like",
-            "icon": "heart"
+            "icon": "heart",
+            "semantic": "favorite"
         },
         {
             "id": "unlike",
             "name": "Remove Like",
-            "icon": "heart.fill"
+            "icon": "heart.fill",
+            "semantic": "favorite"
         },
         {
             "id": "notes",

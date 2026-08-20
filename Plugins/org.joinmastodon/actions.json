@@ -4,46 +4,54 @@
             "id": "reply",
             "name": "Reply",
             "icon": "arrow.turn.up.left",
-            "role": "compose"
+            "role": "compose",
+            "semantic": "reply"
         },
         {
             "id": "boost",
             "name": "Boost",
             "icon": "tapestry.boost",
-            "group": "boost"
+            "group": "boost",
+            "semantic": "boost"
         },
         {
             "id": "unboost",
             "name": "Remove Boost",
             "icon": "tapestry.boost.fill",
-            "group": "boost"
+            "group": "boost",
+            "semantic": "boost"
         },
         {
             "id": "quote",
             "name": "Quote",
             "icon": "quote.bubble",
             "role": "compose",
-            "group": "boost"
+            "group": "boost",
+            "semantic": "quote"
         },
         {
             "id": "favorite",
             "name": "Favorite",
-            "icon": "tapestry.star"
+            "icon": "tapestry.star",
+            "semantic": "favorite"
         },
         {
             "id": "unfavorite",
             "name": "Remove Favorite",
-            "icon": "tapestry.star.fill"
+            "icon": "tapestry.star.fill",
+            "semantic": "favorite"
         },
         {
             "id": "bookmark",
             "name": "Bookmark",
-            "icon": "tapestry.bookmark"
+            "icon": "tapestry.bookmark",
+            "semantic": "keep"
         },
         {
             "id": "unbookmark",
             "name": "Remove Bookmark",
-            "icon": "tapestry.bookmark.fill"
+            "icon": "tapestry.bookmark.fill",
+            "semantic": "keep"
         },
         {
             "id": "edit",

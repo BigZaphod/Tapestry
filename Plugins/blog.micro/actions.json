@@ -3,12 +3,14 @@
         {
             "id": "bookmark",
             "name": "Bookmark",
-            "icon": "tapestry.bookmark"
+            "icon": "tapestry.bookmark",
+            "semantic": "keep"
         },
         {
             "id": "unbookmark",
             "name": "Remove Bookmark",
-            "icon": "tapestry.bookmark.fill"
+            "icon": "tapestry.bookmark.fill",
+            "semantic": "keep"
         },
         {
             "id": "thread",
