@@ -34,6 +34,7 @@ The list below summarizes what changed at each version so you can upgrade an old
   * [`item.metadata`](#metadata-dictionary) — a per-item `[String: String]` bag for the data an action needs (actions read from it instead of an `actionValue`).
   * [`item.actions`](#actions-set) is a `Set` of action ids, managed with `item.actions.add(id)` / `item.actions.delete(id)` (replacing the old per-action value strings).
   * optional [presentation attributes](#action-presentation) on an action — `priority`, `group`, and `destructive` — control where and how it appears.
+  * an optional [`semantic`](#action-semantics) on an action names the *gesture* it performs (boost, favorite, …) in a cross-service vocabulary — earning it a standard keyboard shortcut and a consistent position.
   * [`Item.delete(uri)`](#removing-an-item) reports an item as removed (from `load()` or `performAction()`), so a connector can delete a post or reconcile content that no longer exists.
   * the [`refresh`](#action-roles) action role — reload a single item in place (e.g. to refresh poll results).
   * **interactive polls** — a [`PollAttachment`](#pollattachment) becomes votable when its options carry an `id` and the poll sets an `action`; Tapestry submits the user's selection through `performAction` (with the new `value`/`voters` fields on the read side). See [Voting](#voting).
@@ -110,6 +111,7 @@ Two properties shape what an action is:
 
   * **role** — what kind of action it is, and what its result means. A role-less action typically mutates an item in place; a [`context`](#action-roles) action returns a conversation thread; a [`refresh`](#action-roles) action re-fetches a single item; a [`compose`](#action-roles) action returns a [`Draft`](#draft) which opens the composer.
   * **target** — what the action operates on. This also defines the object (or lack thereof) that Tapestry hands to `performAction` as its second argument. It's defined by the specific array in which the action lives within `actions.json`: [`items`](#action-targets) (a timeline item), `drafts` (a composer submit), or `feeds` (the account itself).
+  * **semantic** — optionally, which *gesture* the action performs in Tapestry's cross-service vocabulary ([`boost`, `favorite`, `keep`, …](#action-semantics)) — this is what earns it a standard keyboard shortcut and a consistent button position across services.
 
 That single dispatch point — `performAction` — is what most interaction is built on. See [`actions.json`](#actionsjson) for the full schema, the roles, the targets, and presentation options.
 
@@ -2940,6 +2942,28 @@ A name that clusters related actions into a single button that opens a small men
 **`destructive`**
 
 When `true`, the action is styled to read as destructive and asks the user to confirm before performing — use it for actions like deleting a post. A destructive action defaults to the overflow menu (as if `priority` were `"secondary"`) unless you set `priority` yourself.
+
+#### Action Semantics
+
+An optional `semantic` names the *gesture* an `items` action performs, in Tapestry's cross-service vocabulary — Mastodon's "Boost" and Bluesky's "Repost" both declare `"semantic": "boost"`. It's independent of `role` (what performing returns) and `priority` (where the button goes): `semantic` says what the action *means*, and Tapestry uses that to give the same gesture the same treatment on every service. Declaring one earns the action:
+
+  * a **standard keyboard shortcut** (registered in the Mac menu bar's Item menu, and on iPad hardware keyboards),
+  * a **consistent position** among the item's buttons — semantic actions render first, in the order below, regardless of manifest order,
+  * a **default icon** when the action doesn't set one.
+
+| `semantic` | The gesture | Typical actions | Shortcut |
+|---|---|---|---|
+| `reply` | reply/comment | reply | ⌘R |
+| `boost` | share to your followers | boost, repost, reblog | ⌥⌘B |
+| `quote` | share with your commentary | quote | ⇧⌘B |
+| `favorite` | appreciate | favorite, like | ⌥⌘F |
+| `keep` | save on the service | bookmark, save | ⌥⌘K |
+
+```json
+{ "id": "repost", "name": "Repost", "icon": "tapestry.boost", "group": "repost", "semantic": "boost" }
+```
+
+Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `destructive` action never gets a shortcut; an unrecognized value is ignored (which also makes the vocabulary forward-extensible — a direct-message gesture, `message`, is anticipated). Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0.)
 
 #### Built-in Symbols
 
