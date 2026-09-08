@@ -30,6 +30,23 @@ async function getFeedInfo(did, feedId) {
     return [feedName, avatar];
 }
 
+// Hydrates posts to full views (viewer state, counts, resolved embeds), keyed by uri. `getPosts` takes at most
+// 25 uris per call, and the AppView silently drops any it can't serve (deleted, blocked, taken down), so a uri
+// may have no entry. This is the same batch the official client runs behind its notifications tab: a
+// notification carries only the bare record, so anything that needs viewer state — the like/repost toggles,
+// the reply count — has to come from here.
+async function postViewsForUris(uris) {
+    const unique = [...new Set(uris)];
+    const chunks = [];
+    for (let i = 0; i < unique.length; i += 25) { chunks.push(unique.slice(i, i + 25)); }
+    const pages = await Promise.all(chunks.map((chunk) => fetch(`${site}/xrpc/app.bsky.feed.getPosts?uris=${chunk.map(encodeURIComponent).join("&uris=")}`).json()));
+    const views = new Map();
+    for (const page of pages) {
+        for (const view of page.posts ?? []) { views.set(view.uri, view); }
+    }
+    return views;
+}
+
 function normalizeAccount(account) {
     let result = account.trim();
     if (result.length > 1 && result.startsWith("@")) {

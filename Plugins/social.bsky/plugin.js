@@ -174,77 +174,26 @@ function queryTimeline(endDate) {
 }
 
 async function queryMentions() {
-    const url = `${site}/xrpc/app.bsky.notification.listNotifications?limit=100`;
-    const jsonObject = await fetch(url).json();
+    // `reasons` filters server-side, so the page holds only posts we'd hydrate anyway instead of mostly likes/follows.
+    const reasons = [];
+    if (includeMentions == "on") { reasons.push("mention"); }
+    if (includeReplies == "on") { reasons.push("reply"); }
+    const url = `${site}/xrpc/app.bsky.notification.listNotifications?limit=100&` + reasons.map((reason) => `reasons=${reason}`).join("&");
+    const notifications = (await fetch(url).json()).notifications ?? [];
+
+    // A notification carries only the bare record — no viewer state, no counts — so the item's actions can't be built
+    // from it. Hydrate the posts and build them exactly like timeline items; the notification only supplies the label.
+    const views = await postViewsForUris(notifications.map((notification) => notification.uri));
 
     let results = [];
-	
-    if (jsonObject.notifications != null) {
-        for (const notification of jsonObject.notifications) {
-            if (notification.reason != null) {
-                if (includeMentions == "on" && notification.reason == "mention") {
-                    results.push(postForNotification(notification, "MENTION"));
-                }
-                if (includeReplies == "on" && notification.reason == "reply") {
-                    results.push(postForNotification(notification, "REPLY"));
-                }
-            }
+    for (const notification of notifications) {
+        const view = views.get(notification.uri);
+        if (view == null) { continue; }   // gone since the notification fired
+        const post = postForItem({ post: view }, true);
+        if (post != null) {
+            post.annotations = [Annotation.createWithText(notification.reason == "mention" ? "MENTION" : "REPLY")];
+            results.push(post);
         }
     }
-
     return results;
-}
-
-function postForNotification(notification, annotationLabel) {
-    let date = new Date(notification.indexedAt);
-
-    const author = notification.author;
-    
-    const identity = identityForAccount(author);
-    
-    let content = contentForRecord(notification.record);
-    
-    let contentWarning = null;
-    if (notification.labels != null && notification.labels.length > 0) {
-        const labels = notification.labels.map((label) => { return label?.val ?? "" }).join(", ");
-        contentWarning = labels; //`Labeled: ${ labels }`;
-    }
-    
-    let annotation = Annotation.createWithText(annotationLabel);
-        
-    let attachments = attachmentsForEmbed(notification.record.embed, encodeURIComponent(author.did));
-                
-    const itemIdentifier = notification.uri.split("/").pop();
-    const postUri = uriPrefix + "/profile/" + author.handle + "/post/" + itemIdentifier;
-        
-    const post = Item.createWithUriDate(postUri, date);
-    post.body = content;
-    post.author = identity;
-    if (attachments != null) {
-        post.attachments = attachments
-    }
-    if (annotation != null) {
-        post.annotations = [annotation];
-    }
-    if (contentWarning != null) {
-        post.contentWarning = contentWarning;
-    }
-
-    // Carry the same reply refs postForItem stamps, so a reply built from a notification-sourced item has a valid
-    // parent + thread root (and prefilled language) instead of nothing. A notification doesn't add a reply action
-    // today; this just keeps the metadata correct if it ever does. The root comes from the record's own reply ref
-    // (this post's thread root); a top-level post is its own root.
-    let metadata = { uri: notification.uri, cid: notification.cid };
-    const replyRoot = notification.record.reply?.root;
-    if (replyRoot?.uri != null && replyRoot?.cid != null) {
-        metadata.rootUri = replyRoot.uri;
-        metadata.rootCid = replyRoot.cid;
-    } else {
-        metadata.rootUri = notification.uri;
-        metadata.rootCid = notification.cid;
-    }
-    if (notification.record?.langs?.[0] != null) { metadata.language = notification.record.langs[0]; }
-    post.metadata = metadata;
-
-    return post;
 }
