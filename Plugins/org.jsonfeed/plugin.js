@@ -5,8 +5,10 @@ async function verify() {
     let text = await sendRequest(site);
     const jsonObject = JSON.parse(text);
     
-    const displayName = jsonObject["title"];
     const baseUrl = jsonObject["home_page_url"];
+    // Fall back to the host when the title is missing or blank: an empty name makes the app use the
+    // connector's name instead, which tells the user nothing about what they subscribed to.
+    const displayName = jsonObject["title"]?.trim() || baseUrl?.split("/")[2] || site.split("/")[2] || null;
     
     var icon = null;
     if (jsonObject["icon"] != null) {

@@ -1,6 +1,23 @@
 
 // xml.feed
 
+// The feed's title, or the host of the first usable URL when the title is missing or blank. Some feeds
+// publish an empty <title> (Yahoo! Sports, for one), and an empty name makes the app fall back to the
+// connector's name, which tells the user nothing about what they subscribed to.
+function feedName(title, ...urls) {
+    const name = title?.trim();
+    if (name) {
+        return name;
+    }
+    for (const url of urls) {
+        const host = url?.split("/")[2];
+        if (host) {
+            return host;
+        }
+    }
+    return null;
+}
+
 async function verify() {
     let xml = await sendRequest(site)
     let jsonObject = await xmlParse(xml);
@@ -22,7 +39,7 @@ async function verify() {
                 baseUrl = feedAttributes.href;
             }
         }
-        const displayName = jsonObject.feed.title?.trim();
+        const displayName = feedName(jsonObject.feed.title, baseUrl, site);
         let icon = null;
         if (jsonObject.feed.icon != null) {
             icon = jsonObject.feed.icon;
@@ -86,7 +103,7 @@ async function verify() {
 // if (jsonObject.rss instanceof Object	&& jsonObject.rss.channel instanceof Object) { ... }
 
     const baseUrl = jsonObject.rss.channel?.link;
-    const displayName = jsonObject.rss.channel?.title?.trim();
+    const displayName = feedName(jsonObject.rss.channel?.title, baseUrl, site);
 
 // NOTE: In theory, the channel image could be used to get an icon for the feed. But some
 // use non-square images that look bad when squished. For example, the New York Times feed
@@ -122,7 +139,7 @@ async function verify() {
     else if (jsonObject["rdf:RDF"] != null) {
         // RSS 1.0
         const baseUrl = jsonObject["rdf:RDF"].channel.link;
-        const displayName = jsonObject["rdf:RDF"].channel.title?.trim();
+        const displayName = feedName(jsonObject["rdf:RDF"].channel.title, baseUrl, site);
 
 // NOTE: In theory, you can get the icon from the RDF channel. In practice, places like
 // Slashdot haven't updated this image since the beginning of this century.
