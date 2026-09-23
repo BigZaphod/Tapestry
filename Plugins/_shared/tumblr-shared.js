@@ -3,11 +3,12 @@
 
 async function performAction(actionId, item, actionValue) {
     // Post fields live in item.metadata; older items stored them as a JSON string under the action value — fall
-    // back for those.
+    // back for those. The host always passes `metadata` (an empty `{}` on an older item), so test for the id rather
+    // than the bag.
     let metadata = item.metadata;
-    if (metadata == null) {
+    if (metadata?.id == null) {
         const legacy = actionValue;
-        if (legacy != null) { metadata = JSON.parse(legacy); }
+        if (legacy) { metadata = JSON.parse(legacy); }
     }
 
     let blogName = getItem("blogName");

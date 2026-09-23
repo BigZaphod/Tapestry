@@ -1234,11 +1234,12 @@ function suggestHashtags(query) {
 
 async function performAction(actionId, target, actionValue) {
     // Post uri/cid/rkey live in item.metadata; older items stored them as a JSON string under the action value — fall
-    // back for those. `target` is null for a feed-targeted action (newPost), so `?.`.
+    // back for those. The host always passes `metadata` (an empty `{}` on an older item), so test for the uri rather
+    // than the bag. `target` is null for a feed-targeted action (newPost), so `?.`.
     let metadata = target?.metadata;
-    if (metadata == null) {
+    if (metadata?.uri == null) {
         const legacy = actionValue;
-        if (legacy != null) {
+        if (legacy) {
             const values = JSON.parse(legacy);
             metadata = { uri: values.uri, cid: values.cid };
             // The old unlike/unrepost actions carried the record's rkey directly.
