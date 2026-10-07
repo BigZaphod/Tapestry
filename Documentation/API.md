@@ -1487,7 +1487,7 @@ images.push({ image: blob, alt: attachment.text ?? "", aspectRatio: { width, hei
 
 `sharable(asset) → Promise`
 
-Resolves to a copy of a [`FileAsset`](#fileasset) with its location and other identifying metadata removed — GPS coordinates and camera/device identity — without re-compressing it: images keep their quality (lossless for JPEG/HEIC, pixel-for-pixel otherwise), and a movie or audio clip has its container rewritten rather than being re-encoded. Idempotent: an already-stripped asset resolves to itself.
+Resolves to a copy of a [`FileAsset`](#fileasset) with its location and other identifying metadata removed — GPS coordinates and camera/device identity — without re-compressing it: images keep their quality (lossless for JPEG/HEIC, pixel-for-pixel otherwise), and a movie or audio clip has its container rewritten rather than being re-encoded. The exception is an image in a format Tapestry can read but not write (HEIF, JPEG XL, camera RAW, …): there's no way to strip it in place, so it's converted to JPEG (or PNG, when it has transparency) — its `mimeType` and `filename` extension change to match. Idempotent: an already-stripped asset resolves to itself.
 
 You rarely need this. Media the **user picks** is already stripped before your connector ever sees it (see [`FileAsset`](#fileasset) → Privacy). `sharable()` is here for the case where you re-host content you fetched yourself with [`fetch(url).file()`](#reading-the-response) — not stripped, because it's treated as external — and want to guarantee it carries no location before you upload it.
 
