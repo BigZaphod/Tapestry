@@ -16,6 +16,10 @@ Each Tapestry release may add, change, or remove API. A connector opts into a re
 
 The list below summarizes what changed at each version so you can upgrade an older connector. Throughout the rest of this document, the **Compatibility** notes spell out the details for each item. When upgrading, start at your connector's current `minimum_app_version` and work forward.
 
+### 2.1
+
+**Actions are labeled with `label`.** An action's displayed text in `actions.json` is now `label`, matching the rest of the API; `name` still works. See [actions.json](#actionsjson).
+
 ### 2.0
 
 2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
@@ -2776,7 +2780,7 @@ This example extracts a value from the TXT record content using a capture group:
 ---
 ### actions.json
 
-This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `name` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below) and is **optional** but highly encouraged. There are a few fallback icons based on an action's `role`, but most will get a generic placeholder so setting something explicit is a good idea.
+This file defines actions that can alter items supplied by a connector. An action is defined and referenced by `id`, however the `label` and `icon` are displayed in the Tapestry user interface. The `icon` can be any SF Symbol name or one of Tapestry's built-in symbols (listed below) and is **optional** but highly encouraged. There are a few fallback icons based on an action's `role`, but most will get a generic placeholder so setting something explicit is a good idea.
 
 As of Tapestry 1.4, actions can also have an optional `role` that further determines where the action is rendered in the UI, assumptions about the action's return values, and how it is expected to behave. (See roles listed below.)
 
@@ -2793,17 +2797,17 @@ Actions are grouped by **target** — what they operate on — see [Action Targe
 	"items": [
 		{
 			"id": "favorite",
-			"name": "Add Favorite",
+			"label": "Add Favorite",
 			"icon": "heart.fill"
 		},
 		{
 			"id": "unfavorite",
-			"name": "Remove Favorite",
+			"label": "Remove Favorite",
 			"icon": "heart"
 		},
 		{
 			"id": "thread",
-			"name": "Thread",
+			"label": "Thread",
 			"icon": "bubble",
 			"role": "context"
 		}
@@ -2811,7 +2815,7 @@ Actions are grouped by **target** — what they operate on — see [Action Targe
 }
 ```
 
-> **Compatibility:** The `items` section predates 2.0 and is unchanged. The `drafts` and `feeds` sections were added in Tapestry 2.0; older versions ignore them.
+> **Compatibility:** The `items` section predates 2.0 and is unchanged. The `drafts` and `feeds` sections were added in Tapestry 2.0; older versions ignore them. `label` was added in Tapestry 2.1; earlier versions read the same text from `name`, which 2.1 still accepts. A connector that uses `label` should set its `minimum_app_version` to 2.1 or later.
 
 When returning an `Item` from `load()`, use `item.actions.add()` to add the actions that apply to it. Any extra data the actions need can be stored in `item.metadata`.
 
@@ -2832,7 +2836,7 @@ For example, an action that marks an item as a favorite might need an identifier
 
 When an item has one or more actions, a menu or one or more action buttons will be displayed in the app. When a user selects one, the `performAction` function is called with the action `id` and the `item`.
 
-It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or name so the user can tell that the state has changed. Use `item.actions.delete()` and `item.actions.add()` within your `performAction` implementation to do this.
+It is the connector’s responsibility to manage the list of actions as the state of the item changes. For example, if an action to "favorite" is performed, it would be removed from the item and replaced with an "unfavorite" action with a different icon and/or label so the user can tell that the state has changed. Use `item.actions.delete()` and `item.actions.add()` within your `performAction` implementation to do this.
 
 The modified item is returned to Tapestry by returning it from `performAction`. If the action cannot be performed, throw an `Error` and it will be displayed to the user.
 
@@ -2910,7 +2914,7 @@ A composer is usually made of **two** actions that work together — one that *o
     "items": [
         {
             "id": "reply",
-            "name": "Reply",
+            "label": "Reply",
             "icon": "arrow.turn.up.left",
             "role": "compose"
         }
@@ -2918,7 +2922,7 @@ A composer is usually made of **two** actions that work together — one that *o
     "drafts": [
         {
             "id": "send",
-            "name": "Post",
+            "label": "Post",
             "icon": "paperplane"
         }
     ]
@@ -2960,7 +2964,7 @@ An optional `semantic` names the *gesture* an `items` action performs, in Tapest
 | `keep` | save on the service | bookmark, save | ⌥⌘K |
 
 ```json
-{ "id": "repost", "name": "Repost", "icon": "tapestry.boost", "group": "repost", "semantic": "boost" }
+{ "id": "repost", "label": "Repost", "icon": "tapestry.boost", "group": "repost", "semantic": "boost" }
 ```
 
 Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `destructive` action never gets a shortcut; an unrecognized value is ignored (which also makes the vocabulary forward-extensible — a direct-message gesture, `message`, is anticipated). Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0.)
