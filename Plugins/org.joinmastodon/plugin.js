@@ -150,6 +150,10 @@ function queryHomeTimeline(endDate, followedTagNames) {
                     else if (item.quote != null && includeQuotes != "on") {
                         // skip quotes
                     }
+                    else if (includeRepliesToOthers != "on" && item.in_reply_to_id != null && item.in_reply_to_account_id != item.account.id && item.in_reply_to_account_id != userId) {
+                        // skip replies to others (Mastodon only sends replies between people you follow, but
+                        // Akkoma/Pleroma send every reply from people you follow unless asked otherwise)
+                    }
                     else {
                         post = postForItem(item);
                     }
