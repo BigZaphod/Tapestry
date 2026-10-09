@@ -456,6 +456,10 @@ What the activity is about. Build it with `Item.create` or `Identity.create`: un
 
 Who did it. May be omitted when it's the subject item's own author. For a follow, it's the follower.
 
+#### shortcodes: Dictionary
+
+Custom emoji in the `author`'s name, like an item's [`shortcodes`](#shortcodes-dictionary). A subject item carries its own.
+
 #### actions: Set
 
 Reserved for activity actions, such as accepting a follow request.
