@@ -20,6 +20,10 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Actions are labeled with `label`.** An action's displayed text in `actions.json` is now `label`, matching the rest of the API; `name` still works. See [actions.json](#actionsjson).
 
+**Activity.** A connector can report what happens *to* the user — replies, mentions, likes, follows — by declaring its types in [`activities.json`](#activitiesjson) and returning [`Activity`](#activity-1) objects from `load()` alongside its items. See [Activity](#activity) in Concepts.
+
+**Semantics are shared.** The `semantic` vocabulary actions use now also describes activity types, and gains `mention` and `follow`. See [Semantics](#semantics).
+
 ### 2.0
 
 2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
@@ -115,7 +119,7 @@ Two properties shape what an action is:
 
   * **role** — what kind of action it is, and what its result means. A role-less action typically mutates an item in place; a [`context`](#action-roles) action returns a conversation thread; a [`refresh`](#action-roles) action re-fetches a single item; a [`compose`](#action-roles) action returns a [`Draft`](#draft) which opens the composer.
   * **target** — what the action operates on. This also defines the object (or lack thereof) that Tapestry hands to `performAction` as its second argument. It's defined by the specific array in which the action lives within `actions.json`: [`items`](#action-targets) (a timeline item), `drafts` (a composer submit), or `feeds` (the account itself).
-  * **semantic** — optionally, which *gesture* the action performs in Tapestry's cross-service vocabulary ([`boost`, `favorite`, `keep`, …](#action-semantics)) — this is what earns it a standard keyboard shortcut and a consistent button position across services.
+  * **semantic** — optionally, which *gesture* the action performs in Tapestry's cross-service vocabulary ([`boost`, `favorite`, `keep`, …](#semantics)) — this is what earns it a standard keyboard shortcut and a consistent button position across services (see [Action Semantics](#action-semantics)).
 
 That single dispatch point — `performAction` — is what most interaction is built on. See [`actions.json`](#actionsjson) for the full schema, the roles, the targets, and presentation options.
 
@@ -126,6 +130,42 @@ Item actions bring interactivity to items in the timeline such as boosting, favo
 A [`PollAttachment`](#pollattachment) on an item renders as a poll — its options, vote counts, and an optional countdown. To make it interactive and allow the user to **vote** in the poll, every [`PollOption`](#polloption) needs an `id` and the poll's `action` must be set to an [`items` action](#action-targets) id defined in your `actions.json`. When the user picks an option and taps Vote, Tapestry will then run that action through [`performAction`](#performaction) with the chosen option `id` as the value (the 3rd parameter of `performAction`); the connector code submits the vote and returns the updated item to reflect the vote in the timeline. Whether the poll stays votable afterward — for a service that lets people change their vote — is up to the connector. See [Voting](#voting) for the full round-trip.
 
 Voting, then, is just an [action](#actions) the poll routes to. And a poll isn't only something you *read*: a connector whose service supports it can let the user **create** one while [composing](#composing), by allowing a `poll` attachment in [`draft.rules.attachments`](#rules--attachments). The same `PollAttachment` shape crosses the bridge both ways — read as results, written as a new poll.
+
+### Activity
+
+**Activity** is what happens *to* the user: someone replied, mentioned them, liked their post, or followed them. Report it by returning [`Activity`](#activity-1) objects from [`load()`](#load), in the same array as your items.
+
+```javascript
+const activity = Activity.create("reply", notification.id, notification.date);   // type, uri, date
+activity.subject = replyItem;   // what it's about
+activity.author = replier;      // who did it
+```
+
+  * **type** — one of the types declared in [`activities.json`](#activitiesjson), which gives each its label, icon, and wording.
+  * **subject** — an `Item` or an `Identity`. Omit it when the type says it all. A follow has no subject: the follower is its `author`.
+  * **author** — an `Identity`. Omit it when it's the subject item's own author, as for a reply.
+
+The `uri` identifies the event within its type, so it must be unique and stable across loads: a collision merges two activities, and a changing value duplicates one on every load. The `date` is when it happened by the service's clock, not the current time. If an activity arrives again with a different date, the earliest is kept.
+
+Return activities on every load, whatever settings decide which posts appear in the timeline. To remove one, return [`Activity.delete(type, uri)`](#removing-an-activity); an activity that stops appearing isn't removed.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.1.
+
+### Semantics
+
+A **semantic** names a gesture in Tapestry's shared vocabulary, so it's treated the same way on every service. [Actions](#action-semantics) and [activity types](#activitiesjson) can both declare one: on an action it's what the user does, and on an activity type it's what someone did to the user. A semantic that doesn't apply in a context, or that Tapestry doesn't recognize, is ignored.
+
+| `semantic` | On an action | On an activity type |
+|---|---|---|
+| `reply` | reply | replied to you |
+| `boost` | share to your followers | boosted your post |
+| `quote` | share with your commentary | quoted your post |
+| `favorite` | favorite, like | favorited your post |
+| `keep` | bookmark, save | *ignored* |
+| `mention` | address someone; stands in for `reply` | mentioned you |
+| `follow` | *ignored* | followed you |
+
+Activity of the `reply`, `quote`, and `mention` types is what the user is likely to answer, so Tapestry also shows it among their mentions.
 
 ### Composing
 
@@ -223,9 +263,9 @@ The `options` array holds only the options the user actually filled in, in order
 
 #### Editing an existing post
 
-Editing needs no special support: it's an ordinary [`compose`](#action-roles) action on an item that returns a `Draft` **already filled in**, plus a submit action of its own. Tapestry never learns that it's an edit — it opens the same composer with the same rules — so round-trip whatever identifies the post in [`draft.metadata`](#metadata-dictionary-4) and read it back in your submit function.
+Editing needs no special support: it's an ordinary [`compose`](#action-roles) action on an item that returns a `Draft` **already filled in**, plus a submit action of its own. Tapestry never learns that it's an edit — it opens the same composer with the same rules — so round-trip whatever identifies the post in [`draft.metadata`](#metadata-dictionary-5) and read it back in your submit function.
 
-Seed the existing attachments as ordinary media objects carrying a `url` rather than a `file`, each with the service's own reference in its [`metadata`](#metadata-dictionary-1) — which is exactly what your read side already builds, so `postForItem(status).attachments` is usually the seed. **No bytes move**: Tapestry displays remote media through the same cached path the timeline uses, lazily and only for what's shown, and never re-uploads it. Everything else follows from that — the composer won't upload an attachment that's already hosted, alt text and focus point seed the live-editable values, and a seeded attachment sits alongside a freshly picked one with no special case.
+Seed the existing attachments as ordinary media objects carrying a `url` rather than a `file`, each with the service's own reference in its [`metadata`](#metadata-dictionary-2) — which is exactly what your read side already builds, so `postForItem(status).attachments` is usually the seed. **No bytes move**: Tapestry displays remote media through the same cached path the timeline uses, lazily and only for what's shown, and never re-uploads it. Everything else follows from that — the composer won't upload an attachment that's already hosted, alt text and focus point seed the live-editable values, and a seeded attachment sits alongside a freshly picked one with no special case.
 
 Declare your rules as usual, but **omit the attributes the service won't let you change** on an edit — and drop any attribute whose [`availableWhen`](#rules--setting-attributes) points at one you omitted, or it can never unlock. A value that's immutable but worth showing (a quote, say) can be seeded as an attachment and simply never sent.
 
@@ -384,6 +424,57 @@ A removal returned from `load()` lets a connector that can discover deleted cont
 You may optionally pass the time the removal happened as a second argument — `Item.delete(uri, date)`. If omitted, the current time is used. When an item and a removal for the same `uri` are seen together, the newer-dated one wins, so a removal dated earlier than a fresh version of the item is ignored (and a removal you date in the past won't undo a more recent update).
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0; ignored by older versions.
+
+---
+### Activity
+
+Something that happened to the user — see [Activity](#activity) in Concepts. Return activities from `load()` (or `performAction()`), mixed in with items.
+
+```javascript
+const activity = Activity.create("reply", notification.id, new Date(notification.created_at));
+activity.subject = replyItem;
+activity.author = identity;
+```
+
+#### type: String (required)
+
+The `id` of a type declared in [`activities.json`](#activitiesjson). First in `create` because it's the broadest thing about an activity.
+
+#### uri: String (required)
+
+Identifies the event within its type: unique per event and stable across loads.
+
+#### date: Date (required)
+
+When it happened, by the server's clock. Activities dated in the future are ignored when returned from `load()`.
+
+#### subject: Item or Identity
+
+What the activity is about. Build it with `Item.create` or `Identity.create`: unlike other properties, a subject must carry its `kind` (which the factories set), because it can be either. A subject without one is ignored. A follow has no subject: the follower goes in `author`.
+
+#### author: Identity
+
+Who did it. May be omitted when it's the subject item's own author. For a follow, it's the follower.
+
+#### actions: Set
+
+Reserved for activity actions, such as accepting a follow request.
+
+#### metadata: Dictionary
+
+A `[String: String]` bag of whatever your code needs later, like an item's [`metadata`](#metadata-dictionary).
+
+#### Removing an Activity
+
+Return a removal created with `Activity.delete()`, the counterpart of [`Item.delete()`](#removing-an-item). It takes the `type` and `uri` the activity was created with, because the type is part of its identity:
+
+```javascript
+const removal = Activity.delete("follow_request", notification.id);
+```
+
+Like `Item.delete`, it takes an optional trailing `date`, defaulting to now, and the newer-dated of a removal and an activity with the same type and `uri` wins.
+
+> **Compatibility:** `Activity` requires `minimum_app_version` >= 2.1; ignored by older versions.
 
 ---
 ### Identity
@@ -728,7 +819,7 @@ Posts to display above the composer for context — for a reply, the post being 
 
 Content embedded *in* the post, shown **below** the editor (contrast with `context`, which shows above it). Three kinds ride here: an [`Item`](#item) is a **quote**, a `kind: "media"` object is a user-picked **media** attachment (see [Composing → Media](#media)), and a `kind: "poll"` object is a **poll** the user built (see [Composing → Polls](#polls)). To quote, put the [`Item`](#item) being quoted into the array. It mirrors the read side, where an embedded `Item` in [`item.attachments`](#attachments-array-of-mediaattachment-and-linkattachment-and-item-and-pollattachment) is likewise a quoted post — so a quote crosses the bridge in exactly the same shape whether it's being read or composed.
 
-`attachments` is for **display** — the composer renders the embedded `Item` as a quote preview. To *build* the quote at submit, don't dig the reference back out of the attachment: when you build the draft (you already have the item in hand), stash the identifiers you need in the draft's own [`metadata`](#metadata-dictionary-1) — exactly as you carry a reply's references there. Same split as `context` vs. the reply refs: the post to *show* rides `attachments`, the reference you *post with* rides `metadata`.
+`attachments` is for **display** — the composer renders the embedded `Item` as a quote preview. To *build* the quote at submit, don't dig the reference back out of the attachment: when you build the draft (you already have the item in hand), stash the identifiers you need in the draft's own [`metadata`](#metadata-dictionary-2) — exactly as you carry a reply's references there. Same split as `context` vs. the reply refs: the post to *show* rides `attachments`, the reference you *post with* rides `metadata`.
 
 Beyond a quote (a single embedded post), the array holds any **media** attachments the user picked — each a `kind: "media"` object, read at submit ([Composing → Media](#media)) — and a **poll** the user built, a `kind: "poll"` object ([Composing → Polls](#polls)). It can carry several as the connector's [attachment rules](#rules--attachments) allow (multiple media, a poll alongside media, or media alongside a quote).
 
@@ -1103,7 +1194,7 @@ Implement this function to load new data and return it as an `Array` of `Item` o
 
 Optionally, you can deliver items incrementally — for example, from several separate requests — by calling `processResults()` as each batch arrives; returning from `load()` always ends the load.
 
-The array may also include *removals* if the connector can discover that content has been deleted — see [Removing an Item](#removing-an-item).
+The array may also include *removals* if the connector can discover that content has been deleted — see [Removing an Item](#removing-an-item) — and [activities](#activity), which report what happened to the user.
 
 > **Compatibility:** When `minimum_app_version` < 2.0, `load()` returns nothing — results are delivered with `processResults()`, the load ends when its `isComplete` flag is true, and errors are reported with `processError()`.
 
@@ -2014,6 +2105,7 @@ Each connector is defined using the following files:
   * `apps.json` (Optional)
   * `discovery.json` (Optional)
   * `actions.json` (Optional)
+  * `activities.json` (Optional)
   
 The contents of each of these files is discussed below, in the same order.
 
@@ -2949,7 +3041,7 @@ When `true`, the action is styled to read as destructive and asks the user to co
 
 #### Action Semantics
 
-An optional `semantic` names the *gesture* an `items` action performs, in Tapestry's cross-service vocabulary — Mastodon's "Boost" and Bluesky's "Repost" both declare `"semantic": "boost"`. It's independent of `role` (what performing returns) and `priority` (where the button goes): `semantic` says what the action *means*, and Tapestry uses that to give the same gesture the same treatment on every service. Declaring one earns the action:
+An optional `semantic` names the *gesture* an `items` action performs, in Tapestry's cross-service [vocabulary](#semantics) — Mastodon's "Boost" and Bluesky's "Repost" both declare `"semantic": "boost"`. It's independent of `role` (what performing returns) and `priority` (where the button goes): `semantic` says what the action *means*, and Tapestry uses that to give the same gesture the same treatment on every service. Declaring one earns the action:
 
   * a **standard keyboard shortcut** (registered in the Mac menu bar's Item menu, and on iPad hardware keyboards),
   * a **consistent position** among the item's buttons — semantic actions render first, in the order below, regardless of manifest order,
@@ -2962,12 +3054,13 @@ An optional `semantic` names the *gesture* an `items` action performs, in Tapest
 | `quote` | share with your commentary | quote | ⇧⌘B |
 | `favorite` | appreciate | favorite, like | ⌥⌘F |
 | `keep` | save on the service | bookmark, save | ⌥⌘K |
+| `mention` | address the author in a new post | mention | ⌘R, in reply's position |
 
 ```json
 { "id": "repost", "label": "Repost", "icon": "tapestry.boost", "group": "repost", "semantic": "boost" }
 ```
 
-Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `destructive` action never gets a shortcut; an unrecognized value is ignored (which also makes the vocabulary forward-extensible — a direct-message gesture, `message`, is anticipated). Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0.)
+Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `mention` action takes reply's shortcut and position only on an item with no `reply` action; a `destructive` action never gets a shortcut; a semantic that isn't an action gesture (`follow`, for now) or an unrecognized value is ignored. Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0; `mention` in 2.1.)
 
 #### Built-in Symbols
 
@@ -3003,6 +3096,45 @@ tapestry.timeline.mini
 tapestry.tumblr
 tapestry.view.details
 tapestry.youtube
+
+---
+### activities.json
+
+Declares the connector's [activity](#activity) types. Each [`Activity`](#activity-1) names one by its `id`.
+
+```json
+{
+	"activities": [
+		{ "id": "mention", "label": "Mention", "icon": "at", "semantic": "mention", "phrase": "mentioned you" },
+		{ "id": "reply", "label": "Reply", "icon": "arrow.turn.up.left", "semantic": "reply", "phrase": "replied" },
+		{ "id": "like", "label": "Like", "icon": "tapestry.star", "semantic": "favorite", "phrase": "liked your post" },
+		{ "id": "follow", "label": "Follow", "icon": "person.badge.plus", "semantic": "follow", "phrase": "followed you" },
+		{ "id": "poll", "label": "Poll Ended", "icon": "chart.bar" }
+	]
+}
+```
+
+**`id`** (required)
+
+The type's identifier, which activities refer to. Non-empty, with no commas.
+
+**`label`** (required)
+
+A singular noun naming the type ("Reply", "Poll Ended"). Shown when the type has no `phrase` ("Bob · Poll Ended"), and wherever types are listed.
+
+**`icon`**
+
+An SF Symbol or one of the [built-in symbols](#built-in-symbols).
+
+**`semantic`**
+
+What someone did to the user, in the shared [semantics](#semantics) vocabulary. Tapestry decides from it how prominently to show the type. Omitted, unrecognized, or meaningless for activity (`keep`) means none.
+
+**`phrase`**
+
+A past-tense predicate in the service's own words. Tapestry puts the name(s) first: "Bob replied", "Bob and 40 others liked your post". Without one, the name(s) and the label are shown.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.1.
 
 ---
 ## HTML Content
