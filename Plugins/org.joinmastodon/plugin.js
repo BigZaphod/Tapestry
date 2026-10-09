@@ -104,6 +104,15 @@ async function load() {
         })());
     }
 
+    // Activity is always returned, whatever the switches above say: they decide what the timeline shows, and
+    // someone who keeps mentions out of their timeline still expects them in Activity.
+    tasks.push((async () => {
+        console.log(`==== ACTIVITY START`);
+        const results = await queryActivities();
+        console.log(`==== ACTIVITY END results = ${results.length}`);
+        processResults(results);
+    })());
+
     await Promise.all(tasks);
 
     // All done — returning from load() ends the load (items were delivered incrementally above).
@@ -243,6 +252,58 @@ async function queryMentions() {
         }
     }
     return results;
+}
+
+// Mastodon notification types → activities.json type ids. A mention that replies to one of your posts is a reply.
+const activityTypes = {
+    mention: "mention",
+    quote: "quote",
+    favourite: "favorite",
+    reblog: "boost",
+    follow: "follow",
+    follow_request: "follow-request"
+};
+
+// Filtered here rather than with `types[]`, which servers may reject when they don't know a type (`quote` is 4.5+).
+async function queryActivities() {
+    const notifications = await fetch(`${site}/api/v1/notifications`, { params: { limit: 80 } }).json();
+    let results = [];
+    for (const notification of notifications) {
+        let type = activityTypes[notification.type];
+        if (type == null) {
+            continue;
+        }
+        const status = notification.status;
+        if (type == "mention" && status != null && status.in_reply_to_account_id == userId) {
+            type = "reply";
+        }
+        // Every type but the follows is about a post; one that arrives without it has nothing to show.
+        const isFollow = (type == "follow" || type == "follow-request");
+        if (!isFollow && status == null) {
+            continue;
+        }
+
+        const activity = Activity.create(type, notification.id, new Date(notification.created_at));
+        activity.author = identityForAccount(notification.account);
+        // The author's display_name may have custom emoji.
+        activity.shortcodes = {};
+        for (const emoji of notification.account.emojis ?? []) {
+            activity.shortcodes[emoji.shortcode] = emoji.static_url;
+        }
+        if (!isFollow) {
+            activity.subject = postForItem(status);
+        }
+        results.push(activity);
+    }
+    return results;
+}
+
+function identityForAccount(account) {
+    const identity = Identity.createWithName(account.display_name ? account.display_name : account.username);
+    identity.username = "@" + account.acct;
+    identity.uri = account.url;
+    identity.avatar = account.avatar;
+    return identity;
 }
 
 async function queryStatusesForUser(id) {
