@@ -3111,9 +3111,9 @@ Declares the connector's [activity](#activity) types. Each [`Activity`](#activit
 	"activities": [
 		{ "id": "mention", "label": "Mention", "icon": "at", "semantic": "mention", "phrase": "mentioned you" },
 		{ "id": "reply", "label": "Reply", "icon": "arrow.turn.up.left", "semantic": "reply", "phrase": "replied" },
-		{ "id": "like", "label": "Like", "icon": "tapestry.star", "semantic": "favorite", "phrase": "liked your post" },
-		{ "id": "follow", "label": "Follow", "icon": "person.badge.plus", "semantic": "follow", "phrase": "followed you" },
-		{ "id": "poll", "label": "Poll Ended", "icon": "chart.bar" }
+		{ "id": "like", "label": "Like", "icon": "tapestry.star.fill", "semantic": "favorite", "phrase": "liked" },
+		{ "id": "follow", "label": "Follow", "icon": "person.fill", "semantic": "follow", "phrase": "followed you" },
+		{ "id": "poll", "label": "Poll Ended", "icon": "chart.bar.fill" }
 	]
 }
 ```
@@ -3128,7 +3128,7 @@ A singular noun naming the type ("Reply", "Poll Ended"). Shown when the type has
 
 **`icon`**
 
-An SF Symbol or one of the [built-in symbols](#built-in-symbols).
+An SF Symbol or one of the [built-in symbols](#built-in-symbols). It's drawn small inside a filled circle, where a solid shape reads better than an outline, so prefer a symbol's `.fill` version when it has one (`tapestry.star.fill`, `person.fill`). Use the outline when the `.fill` version is a different glyph rather than the same shape solid: `tapestry.boost.fill` is the "boosted" state of a button, so a boost type uses `tapestry.boost`.
 
 **`semantic`**
 
@@ -3136,7 +3136,7 @@ What someone did to the user, in the shared [semantics](#semantics) vocabulary. 
 
 **`phrase`**
 
-A past-tense predicate in the service's own words. Tapestry puts the name(s) first: "Bob replied", "Bob and 40 others liked your post". Without one, the name(s) and the label are shown.
+A short past-tense predicate in the service's own words. Tapestry puts the name(s) first and, when the post it's about is shown below, a colon after: "Bob followed you", "Bob and 40 others liked:". Leave out the post itself ("liked", not "liked your post"). Without a phrase, the name(s) and the label are shown.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.1.
 

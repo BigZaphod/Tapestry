@@ -17,35 +17,35 @@
         {
             "id": "quote",
             "label": "Quote",
-            "icon": "quote.bubble",
+            "icon": "quote.bubble.fill",
             "semantic": "quote",
-            "phrase": "quoted your post"
+            "phrase": "quoted"
         },
         {
             "id": "favorite",
             "label": "Favorite",
-            "icon": "tapestry.star",
+            "icon": "tapestry.star.fill",
             "semantic": "favorite",
-            "phrase": "favorited your post"
+            "phrase": "favorited"
         },
         {
             "id": "boost",
             "label": "Boost",
             "icon": "tapestry.boost",
             "semantic": "boost",
-            "phrase": "boosted your post"
+            "phrase": "boosted"
         },
         {
             "id": "follow",
             "label": "Follow",
-            "icon": "person",
+            "icon": "person.fill",
             "semantic": "follow",
             "phrase": "followed you"
         },
         {
             "id": "follow-request",
             "label": "Follow Request",
-            "icon": "person.badge.clock",
+            "icon": "person.badge.clock.fill",
             "phrase": "requested to follow you"
         }
     ]
