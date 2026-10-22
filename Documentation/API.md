@@ -428,7 +428,7 @@ You may optionally pass the time the removal happened as a second argument — `
 ---
 ### Activity
 
-Something that happened to the user — see [Activity](#activity) in Concepts. Return activities from `load()` (or `performAction()`), mixed in with items.
+Something that happened to the user — see [Activity](#activity) in Concepts. Return activities from `load()`, mixed in with items.
 
 ```javascript
 const activity = Activity.create("reply", notification.id, new Date(notification.created_at));
