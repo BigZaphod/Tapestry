@@ -2138,7 +2138,7 @@ Recommended properties:
  
   * icon: `String` with a URL to an image that will be used as a default for this connector.
   * service\_name: `String` with the name of the service (e.g. "Tumblr", "YouTube", "Blog", "Podcast").
-  * default\_color: `String` with a default color name for feeds created by the connector. Valid values are "purple", "gold", "blue", "coral", "slate", "orange", "green", "teal". If no value is specified, "gray" will be used.
+  * default\_color: `String` with a default color name for feeds created by the connector. Valid values are "orange", "gold", "green", "teal", "blue", "slate", "purple", "coral", "gray". Tapestry 2.1 added "red", "cyan", "navy", "lilac", "taupe". If no value is specified, "gray" will be used.
   * item\_style: `String` with either "post" or "article" to define the content layout.
   * version: `Number` with an integer value that increments with newer versions of the connector. If no value is supplied, 1 is assumed.
   * crosstalk: `String` with "inclusive", "exclusive", or "disabled". See the explanation of these modes below.
