@@ -285,6 +285,7 @@ async function queryActivities() {
 
         const activity = Activity.create(type, notification.id, new Date(notification.created_at));
         activity.author = identityForAccount(notification.account);
+        activity.author.description = accountCounts(notification.account);
         // The author's display_name may have custom emoji.
         activity.shortcodes = {};
         for (const emoji of notification.account.emojis ?? []) {
@@ -304,6 +305,19 @@ function identityForAccount(account) {
     identity.uri = account.url;
     identity.avatar = account.avatar;
     return identity;
+}
+
+// "1,204 followers · 83 posts": enough to decide about someone who followed or reacted, on one short line.
+function accountCounts(account) {
+    const count = (number, one, many) => `${number.toLocaleString()} ${number == 1 ? one : many}`;
+    const counts = [];
+    if (account.followers_count != null) {
+        counts.push(count(account.followers_count, "follower", "followers"));
+    }
+    if (account.statuses_count != null) {
+        counts.push(count(account.statuses_count, "post", "posts"));
+    }
+    return counts.length > 0 ? counts.join(" · ") : null;
 }
 
 async function queryStatusesForUser(id) {

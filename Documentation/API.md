@@ -24,6 +24,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Semantics are shared.** The `semantic` vocabulary actions use now also describes activity types, and gains `mention` and `follow`. See [Semantics](#semantics).
 
+**Identities have a description.** An `Identity` can carry a short [`description`](#description-string), such as a follower count, shown under the name where a person is shown as a card of their own, as the follower in Activity's "followed you" is.
+
 ### 2.0
 
 2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
@@ -145,7 +147,7 @@ activity.author = replier;      // who did it
   * **subject** — an `Item` or an `Identity`. Omit it when the type says it all. A follow has no subject: the follower is its `author`.
   * **author** — an `Identity`. Omit it when it's the subject item's own author, as for a reply.
 
-The `uri` identifies the event within its type, so it must be unique and stable across loads: a collision merges two activities, and a changing value duplicates one on every load. The `date` is when it happened by the service's clock, not the current time. If an activity arrives again with a different date, the earliest is kept.
+The `uri` identifies the event within its type, so it must be unique and stable across loads: a collision merges two activities, and a changing value duplicates one on every load. The `date` is when it happened by the service's clock, not the current time. If an activity arrives again with a different date, the earliest is kept. A service whose ids update in place (one id per thread, say) gets the latest state replacing the old in place, keeping its first date; to make a change count as a new activity, put something that changes (an updated-at, a comment id) into the `uri`.
 
 Return activities on every load, whatever settings decide which posts appear in the timeline. To remove one, return [`Activity.delete(type, uri)`](#removing-an-activity); an activity that stops appearing isn't removed.
 
@@ -473,7 +475,7 @@ A `[String: String]` bag of whatever your code needs later, like an item's [`met
 Return a removal created with `Activity.delete()`, the counterpart of [`Item.delete()`](#removing-an-item). It takes the `type` and `uri` the activity was created with, because the type is part of its identity:
 
 ```javascript
-const removal = Activity.delete("follow_request", notification.id);
+const removal = Activity.delete("follow-request", notification.id);
 ```
 
 Like `Item.delete`, it takes an optional trailing `date`, defaulting to now, and the newer-dated of a removal and an activity with the same type and `uri` wins.
@@ -515,6 +517,17 @@ A string containing the URL for the creator’s avatar on the Internet. A Base64
 #### uri: String
 
 A unique URI for the creator on the Internet. Can be an individual’s account page, bot, or other type of creator. Will be used to show details for the creator if the URI can be converted to a browsable URL.
+
+#### description: String
+
+A short line of plain text that helps someone decide about this person, such as a follower count or the start of a bio. It may contain shortcodes. It shows under the name where a person is shown as a card of their own, such as the follower in Activity's "followed you", and it can be left out. Keep it to a line or two: longer text is cut off.
+
+```javascript
+activity.author = identity;
+activity.author.description = "1,204 followers · 83 posts";
+```
+
+> **Compatibility:** Read by Tapestry 2.1 and later, whatever the connector's `minimum_app_version`; earlier versions ignore it.
 
 ---
 ### Annotation
