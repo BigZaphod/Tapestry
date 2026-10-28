@@ -26,6 +26,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Identities have a description.** An `Identity` can carry a short [`description`](#description-string), such as a follower count, shown under the name where a person is shown as a card of their own, as the follower in Activity's "followed you" is.
 
+**OAuth follows the standard more closely.** The client secret is no longer sent to the `oauth_authorize` endpoint, only to `oauth_token`, so `oauth_authorize_omit_secret` is gone (it's always omitted now). And the authorization callback must return the `state` Tapestry sent, as OAuth requires; a callback without it is refused.
+
 **A throw is a failure whether or not the function is `async`.** Before 2.1, an `Error` thrown by a 2.0 interface function declared without `async` was treated as a connector crash, offering to disable the feed; it now fails that call like any other throw. See [Interface Functions](#interface-functions).
 
 **Connectors can be retired.** A `retired` object in `plugin-config.json` marks a connector whose service no longer works with Tapestry: its feeds say why, and nothing offers it for new feeds. Read by Tapestry 2.1 and later whatever the connector's `minimum_app_version`. See [Retiring a connector](#retiring-a-connector).
@@ -860,7 +862,7 @@ A `[String: String]` map holding the user's current choice for each *setting att
 
 Connector-declared rules that tell the composer how to behave for this draft: which content fields it offers and how they're counted, and the *setting attributes* it presents (visibility, language, per-post permissions, …). Unlike the properties above, these are not user content — the app reads them to drive the composer — so set what applies and omit the rest.
 
-**These rules describe what the composer offers the *user*, not a schema the draft must satisfy.** Your connector hands back a draft in whatever shape it likes — body, attributes, and even attachments already in place — and the rules then govern only what the user may *add*, change, and combine, and when Post enables. Omitting a rule removes that *editing* affordance without removing anything the connector pre-placed: attach a quote or an image and declare no matching attachment slot, and the content still rides along and posts — the user just can't add more of that kind. (So the same `rules` both drive the editor and, by omission, let a connector deliver ready-made content the user can't touch.)
+**These rules describe what the composer offers the *user*, not a schema the draft must satisfy.** Your connector hands back a draft in whatever shape it likes — body, attributes, and even attachments already in place — and the rules then govern only what the user may *add*, change, and combine, and when Post enables. Omitting a rule removes that *editing* affordance without removing anything the connector pre-placed. Attachments are the exception: once you declare attachment combinations, what the post carries — pre-placed attachments included — must fit one of them for Post to enable, so a kind you pre-place needs a slot in a combination that also holds whatever else the post may carry. Declare no attachment rules at all, and pre-placed attachments post as they are. (See [Attachments](#rules--attachments).)
 
 ##### rules — content fields and character counting
 
@@ -971,9 +973,11 @@ app never touches: packing the attachments into the wire format at submit, and f
 transform functions.
 
 The **offered set is implicit** — an attachment type is offerable if and only if it appears somewhere in these
-rules. There is no separate "allowed types" list. And since these rules gate only what the *user* can do, omitting
-a type (or omitting `attachments` entirely) is how you *prevent* the user attaching that kind — while your connector
-stays free to pre-attach it in the draft it hands back (see the editor-vs-draft note under [rules](#rules-object)).
+rules. There is no separate "allowed types" list. Omitting a type is how you *prevent* the user attaching that kind. But
+the rules also decide whether the post can be submitted, and that counts *everything* attached, including attachments
+your connector pre-placed in the draft: each must fit a slot in one combination with the rest. So pre-place only what
+your combinations can hold. Omitting `attachments` entirely leaves a post unconstrained, so whatever you pre-place
+posts as is.
 
 The attachment types (referenced by these flat string names):
 
@@ -1302,7 +1306,7 @@ async function uploadAttachment(file, attachedAs) {
 }
 ```
 
-**`UploadedAsset.create(file, metadata)`** builds the return value: `file` is the actual uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is any object holding your service ref (an id, a blob cid — opaque to the app). At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
+**`UploadedAsset.create(file, metadata)`** builds the return value: `file` is the actual uploaded bytes (the fitted [`FileAsset`](#fileasset)) and `metadata` is an object of `String` values holding your service ref (an id, a blob cid — opaque to the app). As with an item's [`metadata`](#metadata-dictionary), numbers and booleans become strings, and any other value (a nested object, an array, `null`) is dropped with a note in the log; to keep an object, `JSON.stringify` it. At submit, that same `metadata` is on the attachment for you to reference (see [Composing → Media](#media)).
 
 It's important to return the modified file to prevent accidental re-uploads and to support future capabilities like allowing the user to save drafts for later.
 
@@ -2184,7 +2188,6 @@ Optional OAuth properties:
   * oauth\_grant\_type: `String` with grant type (currently, only "authorization\_code" is supported).
   * oauth\_http\_redirect: `Boolean`, with true, the OAuth redirect URI will be "https://iconfactory.com/tapestry-oauth", otherwise "tapestry://oauth" is used.
   * oauth\_basic\_auth: `Boolean`, with true, the client id and secret will be added to a Basic authentication header when generating or refreshing tokens.
-  * oauth\_authorize\_omit\_secret: `Boolean`, with true, the client secret will not be sent to the `oauth_authorize` endpoint. This is needed for Google's OAuth 2.0 server.
   * oauth\_extra\_parameters: `String` with extra parameters for authorization request (e.g. "&duration=permanent&foo=bar")
   * needs\_api\_keys: `Boolean`, with true, user interface will prompt for OAuth API keys and store them securely in the user's keychain. Ignored if a `register` endpoint is specified or if there is no `oauth_authorize` endpoint.
 
