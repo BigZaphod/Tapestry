@@ -26,7 +26,7 @@ async function verify() {
             }
             if (icon === null) {
                 let siteUrl = baseUrl.split("/").splice(0,3).join("/");
-                icon = lookupUrl(siteUrl);
+                icon = await lookupIcon(siteUrl);
             }
         }
         
