@@ -1,5 +1,2 @@
 
-This connector lets you view the top posts of a Subreddit in your timeline.
-
-The name of the `Subreddit` is the only setting needed for this connector.
-
+Reddit no longer lets third-party apps like Tapestry load its posts, so this connector is retired. Feeds that used it can be deleted or disabled in Settings.

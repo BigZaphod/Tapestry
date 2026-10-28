@@ -1,5 +1,2 @@
 
-This connector lets you view the posts of a single user on Reddit.
-
-The name of the `User` is the only setting needed for this connector.
-
+Reddit no longer lets third-party apps like Tapestry load its posts, so this connector is retired. Feeds that used it can be deleted or disabled in Settings.

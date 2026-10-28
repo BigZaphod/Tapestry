@@ -8,5 +8,8 @@
     "needs_verification": true,
     "verify_variables": true,
     "provides_attachments": true,
-    "version": 12
+    "retired": {
+        "reason": "Reddit no longer allows access for third-party apps like Tapestry."
+    },
+    "version": 13
 }
