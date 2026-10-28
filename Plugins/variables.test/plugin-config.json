@@ -1,0 +1,11 @@
+{
+    "id": "variables.test",
+    "display_name": "Testing Stuff",
+    "icon": "https://iconfactory.com/favicon.ico",
+    "site": "https://example.com",
+    "needs_verification": true,
+    "retired": {
+        "reason": "This connector was only for testing Tapestry and is no longer included."
+    },
+    "version": 45
+}

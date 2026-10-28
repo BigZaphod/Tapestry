@@ -1,0 +1,19 @@
+{
+	"inputs": [
+		{
+			"name": "onVerify",
+			"type": "switch",
+			"prompt": "Timeout on Verify",
+		},
+		{
+			"name": "onLoad",
+			"type": "switch",
+			"prompt": "Timeout on Load",
+		},
+		{
+			"name": "loadCondition",
+			"type": "switch",
+			"prompt": "Raise Condition on Load",
+		},
+	]
+}

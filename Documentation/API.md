@@ -2227,7 +2227,7 @@ When a service stops working with Tapestry, ship a new `version` of its connecto
 
   * reason: `String` (required) shown to the user with each of the connector's feeds.
 
-Tapestry 2.1 and later never run a retired connector's script. Its feeds show a problem with the `reason` until the user deletes or disables them, and their actions, replies and posts fail with the `reason`. Nothing offers the connector for new feeds: it's left out of Add Feed, discovery and first-run recommendations. Existing posts, including marked ones, stay until the user deletes the feed.
+Tapestry 2.1 and later never run a retired connector's script. Its feeds show a problem with the `reason` until the user deletes or disables them, and their actions, replies and posts fail with the `reason`. Nothing offers the connector for new feeds: it's left out of Add Feed, discovery and first-run recommendations. Existing posts, including marked ones, stay until the user deletes the feed. Settings lists the connector under Retired Connectors only while feeds use it, and deleting its last feed deletes the connector. A retired connector is never installed on a device that doesn't already have it.
 
 Earlier versions ignore `retired` and run the script, so a retired connector should keep a minimal `plugin.js` whose `load()` and `verify()` fail with the same reason, written for the connector's `minimum_app_version`. It can drop everything that offers or adds feeds (`discovery.json`, `suggestions.json`) and that acts on posts (`actions.json`). Keep `ui-config.json`, so an existing feed's settings still show what it followed, and `apps.json`, so its posts' links still open in the service's app.
 

@@ -1,0 +1,12 @@
+{
+    "id": "com.usetapestry.articles",
+    "display_name": "Articles",
+    "service_name": "Screenshot",
+    "icon": "https://usetapestry.com/icons/generic.png",
+    "site": "https://screenshots.usetapestry.com",
+    "needs_verification": true,
+    "retired": {
+        "reason": "This connector was only for testing Tapestry and is no longer included."
+    },
+    "version": 3
+}

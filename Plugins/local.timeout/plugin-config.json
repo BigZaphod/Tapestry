@@ -1,0 +1,11 @@
+{
+    "id": "local.timeout",
+    "display_name": "Timeout",
+    "icon": "https://usetapestry.com/icons/generic.png",
+    "site": "https://example.com",
+    "needs_verification": true,
+    "retired": {
+        "reason": "This connector was only for testing Tapestry and is no longer included."
+    },
+    "version": 3
+}
