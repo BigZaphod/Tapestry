@@ -26,6 +26,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Identities have a description.** An `Identity` can carry a short [`description`](#description-string), such as a follower count, shown under the name where a person is shown as a card of their own, as the follower in Activity's "followed you" is.
 
+**Connectors can be retired.** A `retired` object in `plugin-config.json` marks a connector whose service no longer works with Tapestry: its feeds say why, and nothing offers it for new feeds. Read by Tapestry 2.1 and later whatever the connector's `minimum_app_version`. See [Retiring a connector](#retiring-a-connector).
+
 ### 2.0
 
 2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
@@ -2167,6 +2169,7 @@ Optional properties:
   * check\_interval: `Number` with number of seconds between load requests (currently unimplemented).
   * synchronizable\_credentials: `Boolean` allows feed authentication tokens to by synced using iCloud keychain when `true` (default is `true`).
   * hidden\_tag\_classes: `Array` of `String`s of HTML CSS class names. HTML tags in an item's body with a matching class will be hidden when rendering the item preview for the timeline.
+  * retired: `Object` present when the connector's service no longer works with Tapestry. See [Retiring a connector](#retiring-a-connector) below.
 
 Optional OAuth properties:
 
@@ -2213,7 +2216,23 @@ Connectors can be configured for Tapestry’s Crosstalk feature using the `cross
   * `inclusive`: Crosstalk checks items in this connector’s feeds and all items in other feeds where Crosstalk is enabled. This is the default behavior.
   * `exclusive`: Crosstalk is only checked with items from other feeds that _do not_ use this connector. If two items are similar and use the same connector, they are _not marked_ as Crosstalk. This mode is used by some connectors to prevent daily items from being labeled as Crosstalk even though they have very similar content ("FoxTrot" and "FoxTrot Classics", for example).
   * `disabled`: Opts this connector entirely out of Crosstalk. Items from feeds using this connector will never be checked or labeled as Crosstalk even if they are similar to an item in another feed.
-  
+
+#### Retiring a connector
+
+When a service stops working with Tapestry, ship a new `version` of its connector with a `retired` object instead of removing it, so feeds people already have learn why they stopped:
+
+	"retired": {
+		"reason": "Reddit no longer allows third-party apps to read its posts."
+	}
+
+  * reason: `String` (required) shown to the user with each of the connector's feeds.
+
+Tapestry 2.1 and later never run a retired connector's script. Its feeds show a problem with the `reason` until the user deletes or disables them, and their actions, replies and posts fail with the `reason`. Nothing offers the connector for new feeds: it's left out of Add Feed, discovery and first-run recommendations. Existing posts, including marked ones, stay until the user deletes the feed.
+
+Earlier versions ignore `retired` and run the script, so a retired connector should keep a minimal `plugin.js` whose `load()` and `verify()` fail with the same reason, written for the connector's `minimum_app_version`. It can drop everything that offers or adds feeds (`discovery.json`, `suggestions.json`) and that acts on posts (`actions.json`). Keep `ui-config.json`, so an existing feed's settings still show what it followed, and `apps.json`, so its posts' links still open in the service's app.
+
+To un-retire a connector, ship a new `version` without `retired`.
+
 #### EXAMPLES
 
 The configuration for the Mastodon connector is:
