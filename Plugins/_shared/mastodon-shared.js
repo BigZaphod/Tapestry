@@ -142,9 +142,11 @@ function postForItem(item) {
 
     post.actions.add(item?.favourited ? "unfavorite" : "favorite");
     post.actions.add(item?.reblogged ? "unboost" : "boost");
-    // Quote only where the instance supports it (Mastodon 4.5+ / API v7). The quoted post's own approval policy may
-    // still reject it at send — the server enforces that, surfaced as an error.
-    if (quoteCapable) { post.actions.add("quote"); }
+    // Quote only where the instance supports it (Mastodon 4.5+ / API v7) and the post's approval policy doesn't
+    // refuse this account: quote_approval.current_user is the server's verdict for the viewer ("automatic",
+    // "manual" — a pending request the author approves — "denied", or "unknown" when the author's server didn't say).
+    // Only "denied" is a certain refusal; the rest may still fail at send, which the server reports as an error.
+    if (quoteCapable && item.quote_approval?.current_user != "denied") { post.actions.add("quote"); }
     post.actions.add(item?.bookmarked ? "unbookmark" : "bookmark");
     post.actions.add(item?.replies_count > 0 ? "replies" : "thread");
 
