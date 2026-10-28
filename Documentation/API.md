@@ -26,6 +26,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Identities have a description.** An `Identity` can carry a short [`description`](#description-string), such as a follower count, shown under the name where a person is shown as a card of their own, as the follower in Activity's "followed you" is.
 
+**A throw is a failure whether or not the function is `async`.** Before 2.1, an `Error` thrown by a 2.0 interface function declared without `async` was treated as a connector crash, offering to disable the feed; it now fails that call like any other throw. See [Interface Functions](#interface-functions).
+
 **Connectors can be retired.** A `retired` object in `plugin-config.json` marks a connector whose service no longer works with Tapestry: its feeds say why, and nothing offers it for new feeds. Read by Tapestry 2.1 and later whatever the connector's `minimum_app_version`. See [Retiring a connector](#retiring-a-connector).
 
 ### 2.0
@@ -1172,7 +1174,7 @@ A FileAsset stays valid as long as you keep a reference to it (holding one acros
 
 The Tapestry app will call the following functions in `plugin.js` when it needs the script to read or write data. If no implementation is provided, no action will be performed. For example, some sources will not need to `verify()` themselves.
 
-These functions are asynchronous (they may be declared `async` and/or return a Promise). `load()`, `performAction()`, and `verify()` report their results by returning a value, and report a failure by throwing an `Error`.
+These functions are asynchronous (they may be declared `async` and/or return a Promise). `load()`, `performAction()`, and `verify()` report their results by returning a value, and report a failure by throwing an `Error`. A function declared without `async` that throws fails the same way as one that does. An error thrown later, from a callback or timer that runs after the function has returned, belongs to no call: Tapestry treats it as a connector error and offers to disable the feed.
 
 ---
 ### verify
@@ -1484,7 +1486,7 @@ For feed-like data sources (such as RSS), this often results in a very significa
 
 `assetType(asset) → Promise`
 
-Classifies a [`FileAsset`](#fileasset) by its actual bytes, resolving to a media-kind `String` — `"image"`, `"animation"`, `"video"`, or `"audio"` — or `null` when the bytes aren't a recognized media type. It reads the file rather than trusting the name or `mimeType`, so a mislabeled file still classifies by what it really is. `await` it.
+Classifies a [`FileAsset`](#fileasset) by its actual bytes, resolving to a media-kind `String` — `"image"`, `"animation"`, `"video"`, or `"audio"` — or `undefined` when the bytes aren't a recognized media type. It reads the file rather than trusting the name or `mimeType`, so a mislabeled file still classifies by what it really is. `await` it.
 
 Use it to branch by kind — to pick an endpoint, or choose which transform to run:
 
@@ -1687,7 +1689,7 @@ function verify() {
 
 This performs an [HTTP conditional request](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Conditional_requests). 
 
-The behavior is nearly identical to `sendRequest()` with one very important difference: If `fullResponse` is false or unspecified and the server responds with an `HTTP 304 Not Modified` response, the value returned by the promise will be `null`.
+The behavior is nearly identical to `sendRequest()` with one very important difference: If `fullResponse` is false or unspecified and the server responds with an `HTTP 304 Not Modified` response, the value returned by the promise will be `undefined`.
 
 The purpose of this is to make it faster to check when content has changed since the last time it was requested. Internally the request's `url` is used as a key to record the modified date and/or etag as returned by the server. That information is then automatically added to the headers of your next conditional request for that same `url` so the server can know how to respond.
 
@@ -1704,7 +1706,7 @@ For feed-like data sources (such as RSS), this often results in a very significa
 
   * url: `String` with a path to an HTML page
   
-Returns a `Promise` with a resolve handler that includes a `String` parameter with a path to an icon for the page. If no icon can be found, a `null` value is returned.
+Returns a `Promise` with a resolve handler that includes a `String` parameter with a path to an icon for the page. If no icon can be found, `undefined` is returned.
 
 ---
 ### processResults
@@ -1957,7 +1959,7 @@ Items can be removed by passing a `null` value. Each store (local and synced) is
   * key: `String` a key for the value that was stored.
   * synced: `Boolean` (optional, default `false`). Reads the **synced** store when `true`. It must match the store the value was written with — there is no fallback between local and synced.
 
-Returns the `String` that was saved for that key in that store, or `null` if none.
+Returns the `String` that was saved for that key in that store, or `undefined` if none.
 
 > **Compatibility:** The `synced` argument requires `minimum_app_version` >= 2.0.
 
