@@ -1,4 +1,10 @@
 {
+    "input": [
+        {
+            "match": "/^@?([a-zA-Z0-9-]+\\.bsky\\.social)$/",
+            "url": "https://bsky.app/profile/$1"
+        }
+    ],
     "sites": [
         "bsky.app",
         "bsky.social"
