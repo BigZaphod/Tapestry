@@ -2589,16 +2589,18 @@ This example recognizes Mastodon-style handles like `@user@instance` or `user@in
 
 With this rule, entering `@bigzaphod@mastodon.social` in the Feed Finder rewrites it to `https://mastodon.social/@bigzaphod`, which is then processed normally by the `url` and `html` rules.
 
-This example recognizes Bluesky handles like `@user.bsky.social`:
+This example recognizes Bluesky handles like `user.bsky.social` or `@user.bsky.social`:
 
 ```json
 	"input": [
 		{
-			"match": "/^@([a-zA-Z0-9._-]+\\.[a-zA-Z]{2,})$/",
+			"match": "/^@?([a-zA-Z0-9-]+\\.bsky\\.social)$/",
 			"url": "https://bsky.app/profile/$1"
 		}
 	]
 ```
+
+Keep an input rule as narrow as what it recognizes. A rule matching any `@name.tld` would claim every domain anyone types. A handle on a custom domain is recognized by a `dns` rule instead, which checks that the domain really publishes one.
 
 #### sites
 
@@ -2734,7 +2736,11 @@ An HTML rule will fail if any of the following are true:
   * The HTML contains no `element` tags.
   * In attribute mode: the `check` attribute doesn't exist on any element, or `match` is not satisfied.
   * In content mode: no element's text content satisfies `match`.
-  * If `use` is specified and no `extract` match is found.
+  * If `use` is specified and no matching element has a value it can use: the `use` attribute present and not empty, and satisfying `extract` if there is one.
+
+When several elements satisfy `match`, they are tried in page order. With `use`, an element whose value the rule can't use is passed over for the next one. A WordPress page, for example, often links its REST API (`application/json`) ahead of its JSON Feed, and a rule whose `extract` rejects `wp-json` finds the feed.
+
+A regex `extract` passes its first capture group to the `variable`, or the whole match when it has no group. A group that takes no part in the match (an optional one) leaves nothing to use, and that element is passed over.
 
 The "href" attribute value in a `use` property will always return an absolute URL, even if there is a relative URL in the document. Variables, specifically `site`, will need a fully qualified domain name to access data since the connector has no notion of a base URL.
 
@@ -2858,6 +2864,8 @@ The `root` element must be the first element in the content. In the example abov
 
 The `with` element must occur at least once in the content. The example above checks that the RSS feed contains an iTunes image, which is required for a podcast.
 
+Unlike `html` rules, `xml` rules are alternatives: the check passes when any one of them matches. The RSS/Atom connector, for example, has one rule each for Atom (`feed` with `entry`), RSS (`rss` with `item`) and RSS 1.0 (`rdf:RDF` with `items`). A matching document's own address becomes `site`.
+
 #### json
 
 If none of the rules above apply, the content can be checked for JSON keys. There are two parameters, both of which are required. This example identifies the JSON Feed format:
@@ -2872,6 +2880,8 @@ If none of the rules above apply, the content can be checked for JSON keys. Ther
 ```
 
 The `key` must be a top-level key in the JSON content. The example ensures that the JSON dictionary has a `version` key with the correct `value`.
+
+Like `xml` rules, `json` rules are alternatives: the check passes when any one of them matches, and the document's own address becomes `site`. The JSON Feed connector has one rule for each JSON Feed version.
 
 #### dns
 
