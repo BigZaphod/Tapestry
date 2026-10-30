@@ -31,25 +31,25 @@
         },
         {
             "id": "favorite",
-            "label": "Favorite",
-            "icon": "tapestry.star",
+            "label": "Like",
+            "icon": "heart",
             "semantic": "favorite"
         },
         {
             "id": "unfavorite",
-            "label": "Remove Favorite",
-            "icon": "tapestry.star.fill",
+            "label": "Remove Like",
+            "icon": "heart.fill",
             "semantic": "favorite"
         },
         {
             "id": "bookmark",
-            "label": "Bookmark",
+            "label": "Save",
             "icon": "tapestry.bookmark",
             "semantic": "keep"
         },
         {
             "id": "unbookmark",
-            "label": "Remove Bookmark",
+            "label": "Remove Save",
             "icon": "tapestry.bookmark.fill",
             "semantic": "keep"
         },

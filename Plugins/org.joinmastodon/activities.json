@@ -23,10 +23,10 @@
         },
         {
             "id": "favorite",
-            "label": "Favorite",
-            "icon": "tapestry.star.fill",
+            "label": "Like",
+            "icon": "heart.fill",
             "semantic": "favorite",
-            "phrase": "favorited"
+            "phrase": "liked"
         },
         {
             "id": "boost",
