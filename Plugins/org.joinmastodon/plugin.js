@@ -334,7 +334,12 @@ function activityForNotification(notification) {
         activity.shortcodes[emoji.shortcode] = emoji.static_url;
     }
     if (!isFollow) {
-        activity.subject = postForItem(status);
+        const post = postForItem(status);
+        // Says what the event is, as Bluesky's do. PRIVATE MENTION already does, and who can see it matters more.
+        if (["mention", "reply", "quote"].includes(type) && status.visibility != "direct") {
+            post.annotations = [Annotation.createWithText(type.toUpperCase())].concat(post.annotations ?? []);
+        }
+        activity.subject = post;
     }
     if (type == "follow-request") {
         activity.actions.add("authorize");
