@@ -69,6 +69,9 @@ async function load() {
     // processResults() as it finishes. (Within a section, ordering-dependent work — followed tags before the
     // home query, home pagination — stays sequential.)
     const tasks = [];
+    // Reference points to store once the whole load has succeeded: a failed load's results are thrown away, so storing
+    // one sooner would skip what it covered.
+    const advances = [];
 
     if (includeHome == "on") {
         tasks.push((async () => {
@@ -79,18 +82,9 @@ async function load() {
             const newestItemDate = parameters[1];
             processResults(results);
             if (newestItemDate) {
-                setItem("endDateTimestamp", String(newestItemDate.getTime()));
+                advances.push(["endDateTimestamp", String(newestItemDate.getTime())]);
             }
             console.log(`==== HOME END`);
-        })());
-    }
-
-    if (includeMentions == "on") {
-        tasks.push((async () => {
-            console.log(`==== MENTIONS START`);
-            const results = await queryMentions();
-            console.log(`==== MENTIONS END results = ${results.length}`);
-            processResults(results);
         })());
     }
 
@@ -106,14 +100,14 @@ async function load() {
 
     // Activity is always returned, whatever the switches above say: they decide what the timeline shows, and
     // someone who keeps mentions out of their timeline still expects them in Activity.
-    tasks.push((async () => {
-        console.log(`==== ACTIVITY START`);
-        const results = await queryActivities();
-        console.log(`==== ACTIVITY END results = ${results.length}`);
-        processResults(results);
-    })());
+    tasks.push(queryNotifications(conversationTypes, "conversationsNewestId", advances));
+    tasks.push(queryNotifications(reactionTypes, "reactionsNewestId", advances));
 
     await Promise.all(tasks);
+
+    for (const [key, value] of advances) {
+        setItem(key, value);
+    }
 
     // All done — returning from load() ends the load (items were delivered incrementally above).
     console.log(`==== LOAD COMPLETE`);
@@ -241,19 +235,6 @@ function queryHomeTimeline(endDate, followedTagNames) {
 	
 }
 
-async function queryMentions() {
-    const jsonObject = await fetch(site + "/api/v1/notifications", { params: { "types[]": "mention", limit: 80 } }).json();
-    let results = [];
-    for (const item of jsonObject) {
-        const postItem = item["status"];
-        // NOTE: Not sure why this happens, but sometimes a mention payload doesn't have a status. If that happens, we just skip it.
-        if (postItem != null) {
-            results.push(postForItem(postItem));
-        }
-    }
-    return results;
-}
-
 // Mastodon notification types → activities.json type ids. A mention that replies to one of your posts is a reply.
 const activityTypes = {
     mention: "mention",
@@ -264,39 +245,103 @@ const activityTypes = {
     follow_request: "follow-request"
 };
 
-// Filtered here rather than with `types[]`, which servers may reject when they don't know a type (`quote` is 4.5+).
-async function queryActivities() {
-    const notifications = await fetch(`${site}/api/v1/notifications`, { params: { limit: 80 } }).json();
-    let results = [];
-    for (const notification of notifications) {
-        let type = activityTypes[notification.type];
-        if (type == null) {
-            continue;
-        }
-        const status = notification.status;
-        if (type == "mention" && status != null && status.in_reply_to_account_id == userId) {
-            type = "reply";
-        }
-        // Every type but the follows is about a post; one that arrives without it has nothing to show.
-        const isFollow = (type == "follow" || type == "follow-request");
-        if (!isFollow && status == null) {
-            continue;
-        }
+// Requested apart, each with its own reference point, so a flood of likes can only cost likes, never a reply or a follow
+// request. Mastodon ignores a type it doesn't know (`quote` is 4.5+).
+const conversationTypes = ["mention", "quote", "follow_request"];
+const reactionTypes = ["favourite", "reblog", "follow"];
 
-        const activity = Activity.create(type, notification.id, new Date(notification.created_at));
-        activity.author = identityForAccount(notification.account);
-        activity.author.description = accountCounts(notification.account);
-        // The author's display_name may have custom emoji.
-        activity.shortcodes = {};
-        for (const emoji of notification.account.emojis ?? []) {
-            activity.shortcodes[emoji.shortcode] = emoji.static_url;
+// How many to take in one load. A catch-up past this finishes on later loads, with no hole.
+const notificationCap = 800;
+const notificationMaxAge = 30 * 24 * 60 * 60 * 1000;
+
+// With a reference point, forward from it, oldest first: someone catching up reads on from where they were, so nothing
+// may be missing above them. Without one, a new feed, newest first, as far back as Tapestry keeps: no one's reading yet.
+async function fetchNotifications(types, key) {
+    const stored = getItem(key);
+    const query = types.map(type => `types%5B%5D=${type}`).join("&");
+    const url = `${site}/api/v1/notifications?limit=80&${query}`;
+    const oldest = Date.now() - notificationMaxAge;
+
+    let notifications = [];
+    let newestId = stored;
+    let cursor = stored;
+    while (notifications.length < notificationCap) {
+        const page = await fetch(stored != null ? `${url}&min_id=${cursor}` : (cursor != null ? `${url}&max_id=${cursor}` : url)).json();
+        if (page.length == 0) {
+            break;
         }
-        if (!isFollow) {
-            activity.subject = postForItem(status);
+        notifications.push(...page);
+        // Either way a page is newest first.
+        if (stored != null) {
+            cursor = newestId = page[0].id;
         }
-        results.push(activity);
+        else {
+            newestId = newestId ?? page[0].id;
+            cursor = page[page.length - 1].id;
+            if (new Date(page[page.length - 1].created_at).getTime() < oldest) {
+                break;
+            }
+        }
+        if (page.length < 80) {
+            break;
+        }
     }
-    return results;
+    return { notifications, newestId };
+}
+
+async function queryNotifications(types, key, advances) {
+    const { notifications, newestId } = await fetchNotifications(types, key);
+    const results = [];
+    for (const notification of notifications) {
+        const activity = activityForNotification(notification);
+        if (activity != null) {
+            results.push(activity);
+        }
+        if (includeMentions == "on" && notification.type == "mention" && notification.status != null) {
+            results.push(postForItem(notification.status));
+        }
+    }
+    console.log(`==== NOTIFICATIONS ${key} results = ${results.length}`);
+    processResults(results);
+    if (newestId != null) {
+        advances.push([key, newestId]);
+    }
+}
+
+function activityForNotification(notification) {
+    let type = activityTypes[notification.type];
+    if (type == null) {
+        return null;
+    }
+    const status = notification.status;
+    if (type == "mention" && status != null && status.in_reply_to_account_id == userId) {
+        type = "reply";
+    }
+    // Every type but the follows is about a post; one that arrives without it has nothing to show.
+    const isFollow = (type == "follow" || type == "follow-request");
+    if (!isFollow && status == null) {
+        return null;
+    }
+
+    // A follow is keyed by who followed, so the one accepting a request returns is this one (`answerFollowRequest`).
+    const uri = (type == "follow") ? notification.account.id : notification.id;
+    const activity = Activity.create(type, uri, new Date(notification.created_at));
+    activity.author = identityForAccount(notification.account);
+    activity.author.description = accountCounts(notification.account);
+    // The author's display_name may have custom emoji.
+    activity.shortcodes = {};
+    for (const emoji of notification.account.emojis ?? []) {
+        activity.shortcodes[emoji.shortcode] = emoji.static_url;
+    }
+    if (!isFollow) {
+        activity.subject = postForItem(status);
+    }
+    if (type == "follow-request") {
+        activity.actions.add("authorize");
+        activity.actions.add("reject");
+        activity.metadata.accountId = notification.account.id;
+    }
+    return activity;
 }
 
 function identityForAccount(account) {

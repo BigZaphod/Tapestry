@@ -2,28 +2,28 @@
     "items": [
         {
             "id": "reply",
-            "name": "Reply",
+            "label": "Reply",
             "icon": "arrow.turn.up.left",
             "role": "compose",
             "semantic": "reply"
         },
         {
             "id": "boost",
-            "name": "Boost",
+            "label": "Boost",
             "icon": "tapestry.boost",
             "group": "boost",
             "semantic": "boost"
         },
         {
             "id": "unboost",
-            "name": "Remove Boost",
+            "label": "Remove Boost",
             "icon": "tapestry.boost.fill",
             "group": "boost",
             "semantic": "boost"
         },
         {
             "id": "quote",
-            "name": "Quote",
+            "label": "Quote",
             "icon": "quote.bubble",
             "role": "compose",
             "group": "boost",
@@ -31,80 +31,92 @@
         },
         {
             "id": "favorite",
-            "name": "Favorite",
+            "label": "Favorite",
             "icon": "tapestry.star",
             "semantic": "favorite"
         },
         {
             "id": "unfavorite",
-            "name": "Remove Favorite",
+            "label": "Remove Favorite",
             "icon": "tapestry.star.fill",
             "semantic": "favorite"
         },
         {
             "id": "bookmark",
-            "name": "Bookmark",
+            "label": "Bookmark",
             "icon": "tapestry.bookmark",
             "semantic": "keep"
         },
         {
             "id": "unbookmark",
-            "name": "Remove Bookmark",
+            "label": "Remove Bookmark",
             "icon": "tapestry.bookmark.fill",
             "semantic": "keep"
         },
         {
             "id": "edit",
-            "name": "Edit Post",
+            "label": "Edit Post",
             "icon": "square.and.pencil",
             "role": "compose",
             "priority": "secondary"
         },
         {
             "id": "delete",
-            "name": "Delete Post",
+            "label": "Delete Post",
             "icon": "trash",
             "destructive": true
         },
         {
             "id": "vote",
-            "name": "Vote"
+            "label": "Vote"
         },
         {
             "id": "thread",
-            "name": "Thread",
+            "label": "Thread",
             "icon": "bubble.left.and.bubble.right",
             "role": "context"
         },
         {
             "id": "replies",
-            "name": "Thread",
+            "label": "Thread",
             "icon": "bubble.left.and.text.bubble.right",
             "role": "context"
         },
         {
             "id": "refresh",
-            "name": "Refresh",
+            "label": "Refresh",
             "role": "refresh"
         }
     ],
     "drafts": [
         {
             "id": "send",
-            "name": "Post",
+            "label": "Post",
             "icon": "paperplane"
         },
         {
             "id": "saveEdit",
-            "name": "Update"
+            "label": "Update"
         }
     ],
     "feeds": [
         {
             "id": "newPost",
-            "name": "New Post",
+            "label": "New Post",
             "icon": "square.and.pencil",
             "role": "compose"
+        }
+    ],
+    "activities": [
+        {
+            "id": "authorize",
+            "label": "Accept",
+            "icon": "checkmark"
+        },
+        {
+            "id": "reject",
+            "label": "Reject",
+            "icon": "xmark"
         }
     ]
 }

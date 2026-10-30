@@ -39,7 +39,7 @@
         {
             "name": "includeMentions",
             "type": "switch",
-            "prompt": "Include Mentions From Others"
+            "prompt": "Show Mentions in Timeline"
         }
     ]
 }

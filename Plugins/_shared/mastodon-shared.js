@@ -761,6 +761,30 @@ function pollParamsForDraft(draft) {
     };
 }
 
+// A 404 means the request was already answered somewhere else, which isn't a failure: the row just goes. Mastodon makes
+// an accepted follower's `follow` notification in a background job, so its id can't be known here; `follow` activities
+// are keyed by account id, so the one returned now and the one a later load finds are the same event.
+async function answerFollowRequest(actionId, request) {
+    const accountId = request.metadata.accountId;
+    const removal = Activity.delete(request.type, request.uri);
+    try {
+        await fetch.post(`${site}/api/v1/follow_requests/${accountId}/${actionId}`);
+    }
+    catch (error) {
+        if (error.status == 404) {
+            return removal;
+        }
+        throw error;
+    }
+    if (actionId == "reject") {
+        return removal;
+    }
+    const follow = Activity.create("follow", accountId, new Date());
+    follow.author = request.author;
+    follow.shortcodes = request.shortcodes;
+    return [removal, follow];
+}
+
 async function performAction(actionId, target, actionValue) {
     // Status id lives on item.metadata; older items stored it as the action value — fall back for those.
     // `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
@@ -770,7 +794,10 @@ async function performAction(actionId, target, actionValue) {
     // asynchronously server-side, and the re-reblog trips the uniqueness check against the not-yet-deleted row.
     // Deliberately NOT handled: treating it as success would disagree with the server's final (unboosted) state,
     // and there's no timer surface to retry with. Surfacing the error is honest; a human retry succeeds.
-    if (actionId == "favorite") {
+    if (actionId == "authorize" || actionId == "reject") {
+        return await answerFollowRequest(actionId, target);
+    }
+    else if (actionId == "favorite") {
         await fetch.post(`${site}/api/v1/statuses/${id}/favourite`);
         target.actions.delete("favorite");
         target.actions.add("unfavorite");
