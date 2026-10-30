@@ -470,7 +470,7 @@ Custom emoji in the `author`'s name, like an item's [`shortcodes`](#shortcodes-d
 
 #### actions: Set
 
-Reserved for activity actions, such as accepting a follow request.
+The ids of the [`activities` actions](#action-targets) this activity offers, such as accepting a follow request. An activity with actions of its own is always its own row, never grouped with others.
 
 #### metadata: Dictionary
 
@@ -1237,6 +1237,8 @@ Tapestry calls this function when an action needs to be performed by the connect
 Most data an action requires can be set in (and then read from) `item.metadata` or any other item property as needed and so most actions do not need an `actionValue`, however one notable exception is [Voting](#voting) in a poll.
 
 After performing the action, return the result that is expected based on the target and/or role: an updated `Item`, an `Array` of `Item`s (for context actions), or nothing. Throw an `Error` to report a failure. The array may also include *removals* to delete items — for example, a "delete post" action returns a removal for the post. See [Removing an Item](#removing-an-item).
+
+An `activities` action returns the updated [`Activity`](#activity), an [`Activity.delete(type, uri)`](#removing-an-activity), or an `Array` of them. Its type is part of an activity's identity, so answering one with another type means returning both: the removal and the new activity. A new activity that a later `load()` also finds needs a `uri` both can compute, so that it's one event; a service's notification id usually isn't known yet. When the event was already handled somewhere else, return the removal rather than throwing, so its row goes instead of showing a failure.
 
 An action with the [`compose`](#action-roles) role returns a [`Draft`](#draft) instead of items, which opens the composer, and the composer's *submit* actions (in the [`drafts` target](#action-targets)) receive that `Draft`. See [Composing](#composing) for the full flow, including media.
 
@@ -3046,6 +3048,7 @@ An action's **target** — what it operates on, and the object Tapestry passes t
   * **`items`** — the action operates on a timeline item, which is passed to `performAction`. This is the common case (favorite, boost, reply, thread, …).
   * **`drafts`** — the action operates on a [`Draft`](#draft); `performAction` receives the `Draft`. These are the composer's *submit* actions — they appear as buttons **in the composer** (added with `draft.actions.add(id)`), not on a timeline item.
   * **`feeds`** — the action operates on the feed/account itself, with no subject — e.g. a "new post" action that starts a fresh compose.
+  * **`activities`** — the action answers an [activity](#activity) — accepting a follow request, say — which is passed to `performAction` with its `type`, `uri`, `date`, `actions`, `metadata`, `author`, and `shortcodes`. Add one to an activity with `activity.actions.add(id)`. An action is the same concept whatever it acts on, so these follow the same [presentation](#action-presentation) rules and [roles](#action-roles) as item actions: primary ones are buttons on the activity's row, the rest are in its "…" menu, a `compose` action opens the composer, and a `context` action opens a screen of the items it returns. Requires `minimum_app_version` >= 2.1.
 
 A composer is usually made of **two** actions that work together — one that *opens* it and one that *submits* it — and they have different targets, which can be confusing at first:
 
@@ -3092,7 +3095,7 @@ When `true`, the action is styled to read as destructive and asks the user to co
 
 #### Action Semantics
 
-An optional `semantic` names the *gesture* an `items` action performs, in Tapestry's cross-service [vocabulary](#semantics) — Mastodon's "Boost" and Bluesky's "Repost" both declare `"semantic": "boost"`. It's independent of `role` (what performing returns) and `priority` (where the button goes): `semantic` says what the action *means*, and Tapestry uses that to give the same gesture the same treatment on every service. Declaring one earns the action:
+An optional `semantic` names the *gesture* an `items` or `activities` action performs, in Tapestry's cross-service [vocabulary](#semantics) — Mastodon's "Boost" and Bluesky's "Repost" both declare `"semantic": "boost"`. It's independent of `role` (what performing returns) and `priority` (where the button goes): `semantic` says what the action *means*, and Tapestry uses that to give the same gesture the same treatment on every service. Declaring one earns the action:
 
   * a **standard keyboard shortcut** (registered in the Mac menu bar's Item menu, and on iPad hardware keyboards),
   * a **consistent position** among the item's buttons — semantic actions render first, in the order below, regardless of manifest order,
