@@ -21,12 +21,12 @@
         {
             "name": "includeReplies",
             "type": "switch",
-            "prompt": "Include Replies"
+            "prompt": "Show Replies in Timeline"
         },
         {
             "name": "includeMentions",
             "type": "switch",
-            "prompt": "Include Mentions From Others"
+            "prompt": "Show Mentions in Timeline"
         }
     ]
 }

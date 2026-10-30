@@ -1,0 +1,60 @@
+{
+    "activities": [
+        {
+            "id": "mention",
+            "label": "Mention",
+            "icon": "at",
+            "semantic": "mention",
+            "phrase": "mentioned you"
+        },
+        {
+            "id": "reply",
+            "label": "Reply",
+            "icon": "arrow.turn.up.left",
+            "semantic": "reply",
+            "phrase": "replied"
+        },
+        {
+            "id": "quote",
+            "label": "Quote",
+            "icon": "quote.bubble.fill",
+            "semantic": "quote",
+            "phrase": "quoted"
+        },
+        {
+            "id": "like",
+            "label": "Like",
+            "icon": "heart.fill",
+            "semantic": "favorite",
+            "phrase": "liked"
+        },
+        {
+            "id": "repost",
+            "label": "Repost",
+            "icon": "tapestry.boost",
+            "semantic": "boost",
+            "phrase": "reposted"
+        },
+        {
+            "id": "like-via-repost",
+            "label": "Like of Your Repost",
+            "icon": "heart.fill",
+            "semantic": "favorite",
+            "phrase": "liked your repost"
+        },
+        {
+            "id": "repost-via-repost",
+            "label": "Repost of Your Repost",
+            "icon": "tapestry.boost",
+            "semantic": "boost",
+            "phrase": "reposted your repost"
+        },
+        {
+            "id": "follow",
+            "label": "Follow",
+            "icon": "person.fill",
+            "semantic": "follow",
+            "phrase": "followed you"
+        }
+    ]
+}
