@@ -36,7 +36,7 @@ function queryStatusesForTag(tag) {
                 }
                 let post = postForItem(item);
                 if (post != null) {
-                    let annotation = Annotation.createWithText(`#${tag.toUpperCase()}`);
+                    let annotation = Annotation.createWithText(`#${tag}`);
                     annotation.uri = `${site}/tags/${tag}`;
                     post.annotations = [annotation].concat(post.annotations ?? []);
 

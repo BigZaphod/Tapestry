@@ -80,7 +80,7 @@ function parentPostForItem(item, includeActions, results) {
         return;
     }
 
-    const post = postForItem(item, includeActions);
+    const post = postForItem(item, includeActions, null, true, true);
     if (post != null) {
         results.push(post);
     }
@@ -103,7 +103,9 @@ function passesTimelineSwitches(item) {
     return true;
 }
 
-function postForItem(item, includeActions = false, dateOverride = null, allowRepliesFromOthers = true) {
+// `inThread` for a post shown in its conversation (the thread action), where its place in the thread says whether it
+// replies to you: the REPLY, QUOTE and MENTION labels are left off.
+function postForItem(item, includeActions = false, dateOverride = null, allowRepliesFromOthers = true, inThread = false) {
     // Bluesky places a post at the EARLIER of when the server indexed it and the `createdAt` its author claims —
     // its own `sortAt` rule, reproduced here rather than taking `indexedAt` alone. Editing a post re-creates the
     // record (see `saveEdit`), so `indexedAt` would drag an edited post to the top of the timeline while the
@@ -193,7 +195,12 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     
     let annotations = [];
 
-    if (item.reply != null) {
+    // A reply to you says REPLY instead of "In reply to" your own name.
+    const conversation = inThread ? null : conversationLabel(item.post);
+    if (conversation != null) {
+        annotations.push(conversation);
+    }
+    if (item.reply != null && conversation?.text != "REPLY") {
         const replyAnnotation = annotationForReply(item);
         if (replyAnnotation != null) {
             annotations.push(replyAnnotation);
@@ -360,14 +367,36 @@ function annotationForRepost(reason) {
     return annotation;
 }
 
+// What a post by someone else is to you, marked to stand out: a reply to your post, a quote of it, or a mention of you,
+// in that order when it's more than one. Your own posts never get one, a reply to yourself included. Read from the post
+// itself, so a timeline, a notification and a thread label it the same way. Only the connector with an account of its
+// own stores "didSelf", so the others never label.
+function conversationLabel(post) {
+    const didSelf = getItem("didSelf");
+    if (didSelf == null || post.author?.did == didSelf) {
+        return null;
+    }
+    // A post's at-uri names its author: at://<did>/app.bsky.feed.post/<rkey>.
+    const parentDid = post.record?.reply?.parent?.uri?.split("/")[2];
+    // A quote's view is `record` (a viewRecord) or, beside media, `record.record`.
+    const quoted = post.embed?.$type?.startsWith("app.bsky.embed.recordWithMedia") ? post.embed.record?.record : post.embed?.$type?.startsWith("app.bsky.embed.record") ? post.embed.record : null;
+    const mentionsSelf = (post.record?.facets ?? []).some((facet) => (facet.features ?? []).some((feature) => feature.$type == "app.bsky.richtext.facet#mention" && feature.did == didSelf));
+    const text = parentDid == didSelf ? "REPLY" : quoted?.author?.did == didSelf ? "QUOTE" : mentionsSelf ? "MENTION" : null;
+    if (text == null) {
+        return null;
+    }
+    const label = Annotation.createWithText(text);
+    label.prominent = true;
+    return label;
+}
+
 function annotationForReply(item) {
     let annotation = null;
 
     if (item.reply != null && item.reply.parent != null) {
+        // The author continuing their own thread. Informational, so no link: the Thread button opens it.
         if (item.post.author.handle == item.reply.parent.author?.handle) {
-            const text = "Replying to self";
-            annotation = Annotation.createWithText(text);
-            annotation.uri = uriForAccount(item.post.author);
+            annotation = Annotation.createWithText("Thread");
         }
         else {
             let name = nameForAccount(item.reply.parent.author);
@@ -1368,13 +1397,13 @@ async function performAction(actionId, target, actionValue) {
         // thread's own postView carries `viewer`, so this is where a post that arrived without one — a quote embed,
         // say — picks up its real like/repost state and stops being the one actionless post in its own thread. Fall
         // back to the original when the node is blocked.
-        const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true) : null;
+        const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true, null, true, true) : null;
         results.push(rebuiltTarget ?? target);
 
         for (const reply of firstItem.replies ?? []) {
             // Same union as `parent`: a deleted or blocked reply has no `post`.
             if (reply.post != null) {
-                results.push(postForItem(reply, true));
+                results.push(postForItem(reply, true, null, true, true));
             }
         }
         return results;

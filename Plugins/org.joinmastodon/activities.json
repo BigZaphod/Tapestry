@@ -15,6 +15,13 @@
             "phrase": "replied"
         },
         {
+            "id": "message",
+            "label": "Message",
+            "icon": "envelope.fill",
+            "semantic": "message",
+            "phrase": "sent you a message"
+        },
+        {
             "id": "quote",
             "label": "Quote",
             "icon": "quote.bubble.fill",

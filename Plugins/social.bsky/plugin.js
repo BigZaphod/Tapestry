@@ -248,7 +248,6 @@ async function queryNotifications(reasons, key) {
         if (showsInTimeline && view != null && passesTimelineSwitches({ post: view })) {
             const post = postForItem({ post: view }, true);
             if (post != null) {
-                post.annotations = [Annotation.createWithText(notification.reason.toUpperCase())];
                 results.push(post);
             }
         }
@@ -279,10 +278,6 @@ function activityForNotification(notification, views) {
         const post = view != null ? postForItem({ post: view }, true) : null;
         if (post == null) {
             return null;
-        }
-        // A Bluesky reply needn't contain your name, so nothing else in the post says it's to you.
-        if (conversationReasons.includes(notification.reason)) {
-            post.annotations = [Annotation.createWithText(notification.reason.toUpperCase())];
         }
         activity.subject = post;
     }

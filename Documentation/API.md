@@ -174,8 +174,9 @@ A **semantic** names a gesture in Tapestry's shared vocabulary, so it's treated 
 | `keep` | bookmark, save | *ignored* |
 | `mention` | address someone; stands in for `reply` | mentioned you |
 | `follow` | *ignored* | followed you |
+| `message` | *ignored* | sent you a private message (a direct message; Mastodon's private mention) |
 
-Activity of the `reply`, `quote`, and `mention` types is what the user is likely to answer, so Tapestry also shows it among their mentions.
+Activity of the `reply`, `quote`, `mention`, and `message` types is what the user is likely to answer, so Tapestry also shows it among their mentions.
 
 ### Composing
 
@@ -562,6 +563,16 @@ A string containing a URL for the annotation’s icon. If no icon is specified o
 #### uri: String
 
 A URI with more information about the annotation. For things like boosts/reposts/reblogs that are done by an account the user follows, a link to the account listed in the annotation would be appropriate.
+
+#### prominent: Boolean
+
+Marks an annotation that should stand out: one that says what the item is to the user, such as a reply to them or a private message. Tapestry draws it as a pill in the item's own colors and in capitals, whatever its casing, below the item's other annotations, so these posts are easy to spot on every service. Leave it off for the rest: "Bob Boosted" says how a post arrived, and a visibility label ("Followers only") says who can see it. Annotations that aren't prominent show as written. Older versions of Tapestry show a prominent annotation as plain text. (Added in Tapestry 2.1.)
+
+```javascript
+const label = Annotation.createWithText("REPLY");
+label.prominent = true;
+post.annotations = [label];
+```
 
 ---
 ### MediaAttachment

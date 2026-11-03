@@ -169,7 +169,7 @@ function queryHomeTimeline(endDate, followedTagNames) {
                                     post = null;
                                 }
                                 else {
-                                    let annotation = Annotation.createWithText(`#${matchedTag.name.toUpperCase()}`);
+                                    let annotation = Annotation.createWithText(`#${matchedTag.name}`);
                                     annotation.uri = `${site}/tags/${matchedTag.name.toLowerCase()}`;
                                     post.annotations = [annotation].concat(post.annotations ?? []);
                                 }
@@ -329,6 +329,10 @@ function activityForNotification(notification) {
     if (type == "mention" && status != null && status.in_reply_to_account_id == userId) {
         type = "reply";
     }
+    // A direct post is a message, whether it replies or not.
+    if ((type == "mention" || type == "reply") && status?.visibility == "direct") {
+        type = "message";
+    }
     // Every type but the follows is about a post; one that arrives without it has nothing to show.
     const isFollow = (type == "follow" || type == "follow-request");
     if (!isFollow && status == null) {
@@ -346,12 +350,8 @@ function activityForNotification(notification) {
         activity.shortcodes[emoji.shortcode] = emoji.static_url;
     }
     if (!isFollow) {
-        const post = postForItem(status);
-        // Says what the event is, as Bluesky's do. PRIVATE MENTION already does, and who can see it matters more.
-        if (["mention", "reply", "quote"].includes(type) && status.visibility != "direct") {
-            post.annotations = [Annotation.createWithText(type.toUpperCase())].concat(post.annotations ?? []);
-        }
-        activity.subject = post;
+        // Labeled (REPLY, MENTION, QUOTE, MESSAGE) by `postForItem`, as it is in the timeline.
+        activity.subject = postForItem(status);
     }
     if (type == "follow-request") {
         activity.actions.add("authorize");

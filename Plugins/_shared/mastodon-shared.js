@@ -26,7 +26,30 @@ function normalizeTag(tag) {
     return result;
 }
 
-function postForItem(item) {
+// What a post by someone else is to you, marked to stand out: a reply to your post, a quote of it, or a mention of you,
+// in that order when it's more than one. Your own posts never get one, a reply to yourself included, and a direct post
+// has MESSAGE instead (whoever sent it). `item` is the post itself, a boost already unwrapped. "userId" is the
+// authenticated account, which only the connectors with an account of their own store.
+function conversationLabel(item) {
+    const userId = getItem("userId");
+    if (userId == null || item.account?.id == userId || item.visibility == "direct") {
+        return null;
+    }
+    const text = item.in_reply_to_account_id == userId ? "REPLY"
+        : item.quote?.quoted_status?.account?.id == userId ? "QUOTE"
+        : (item.mentions ?? []).some((mention) => mention.id == userId) ? "MENTION"
+        : null;
+    if (text == null) {
+        return null;
+    }
+    const label = Annotation.createWithText(text);
+    label.prominent = true;
+    return label;
+}
+
+// `inThread` for a post shown in its conversation (the thread action), where its place in the thread says whether it
+// replies to you or continues the author's own thread: those labels are left off. Who can see it still shows.
+function postForItem(item, inThread = false) {
     const postDate = new Date(item["created_at"]);
 
     let shortcodes = {};
@@ -81,17 +104,17 @@ function postForItem(item) {
         const visibility = item["visibility"] ?? "public";
 
         if (visibility == "private") {
-            annotation = Annotation.createWithText(`FOLLOWERS ONLY`);
+            annotation = Annotation.createWithText(`Followers only`);
         }
         else if (visibility == "direct") {
-            annotation = Annotation.createWithText(`PRIVATE MENTION`);
+            annotation = Annotation.createWithText(`MESSAGE`);
+            annotation.prominent = true;
         }
         else if (visibility == "public" || visibility == "unlisted") {
             if (item.in_reply_to_account_id != null) {
-                if (item.in_reply_to_account_id == account.id) {
-                    let text = "Replying to self";
-                    annotation = Annotation.createWithText(text);
-                    annotation.uri = account["url"];
+                // The author continuing their own thread. Informational, so no link: the Thread button opens it.
+                if (item.in_reply_to_account_id == account.id && !inThread) {
+                    annotation = Annotation.createWithText("Thread");
                 }
                 // "Replying to @X" annotations are intentionally omitted — they were inconsistent across timelines vs.
                 // threads vs. mentions. Stashed below in case we revisit.
@@ -112,8 +135,9 @@ function postForItem(item) {
         }
     }
 
-    if (annotation != null) {
-        post.annotations = [annotation];
+    const annotations = [inThread ? null : conversationLabel(item), annotation].filter((label) => label != null);
+    if (annotations.length > 0) {
+        post.annotations = annotations;
     }
 
     const itemEmojis = item["emojis"];
@@ -851,15 +875,15 @@ async function performAction(actionId, target, actionValue) {
         let results = [];
         // `item` here is a raw Mastodon status from the API (as postForItem expects); `target` is our Item.
         for (const item of context["ancestors"]) {
-            results.push(postForItem(item));
+            results.push(postForItem(item, true));
         }
         // Fetch the target fresh rather than echoing `target` back: the echo is frozen at tap time, so a
         // vote or state change made while the thread is open would revert when the thread reloads. The
         // /context endpoint doesn't include the status itself, hence the extra request.
         const status = await fetch(`${site}/api/v1/statuses/${id}`).json();
-        results.push(postForItem(status));
+        results.push(postForItem(status, true));
         for (const item of context["descendants"]) {
-            results.push(postForItem(item));
+            results.push(postForItem(item, true));
         }
         return results;
     }
