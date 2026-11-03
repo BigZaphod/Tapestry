@@ -30,6 +30,8 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **A throw is a failure whether or not the function is `async`.** Before 2.1, an `Error` thrown by a 2.0 interface function declared without `async` was treated as a connector crash, offering to disable the feed; it now fails that call like any other throw. See [Interface Functions](#interface-functions).
 
+**What a function stores is kept only if it succeeds.** With `minimum_app_version` >= 2.1, changes to stored state made with [`setItem`](#setitem) or [`clearItems`](#clearitems) is discarded if `load` ultimately fails with an error or timeout. Before, the state was saved right away, but connectors using `setItem` for a crusor could lose their place if the current `load` failed to finish or import correctly.
+
 **Connectors can be retired.** A `retired` object in `plugin-config.json` marks a connector whose service no longer works with Tapestry: its feeds say why, and nothing offers it for new feeds. Read by Tapestry 2.1 and later whatever the connector's `minimum_app_version`. See [Retiring a connector](#retiring-a-connector).
 
 ### 2.0
@@ -355,7 +357,7 @@ A unique URI for the item on the Internet. Used to show details in a browser (as
 
 #### date: Date (required)
 
-The date and time when the post was created.
+The date and time when the post was created. A date up to a day ahead is treated as the moment the item arrived. One further ahead is ignored until it's that close.
 
 #### title: String
 
@@ -454,7 +456,7 @@ Identifies the event within its type: unique per event and stable across loads.
 
 #### date: Date (required)
 
-When it happened, by the server's clock. Activities dated in the future are ignored when returned from `load()`.
+When it happened, by the server's clock. A future date from `load()` is handled the same as an item's [`date`](#date-date-required).
 
 #### subject: Item or Identity
 
@@ -1955,7 +1957,9 @@ This is the same link detection the composer uses to auto-discover link-card att
 
 Items can be removed by passing a `null` value. Each store (local and synced) is limited to 100,000 total characters; a write that would exceed the cap is ignored. Synced storage is best-effort — treat it as a cache that can be cleared or arrive from another device — and it's for small values (a set of preferences, a short history), not bulk data.
 
-> **Compatibility:** The `synced` argument requires `minimum_app_version` >= 2.0; older connectors get local storage only (a stray third argument is ignored).
+Anything a function stores is kept only if it succeeds, and anything `load` stores only once its items are saved. Until then the function sees its own values and nothing else does. If it doesn't succeed, the next call sees the old values, so it's safe to store your place in a feed before `load` finishes.
+
+> **Compatibility:** The `synced` argument requires `minimum_app_version` >= 2.0; older connectors get local storage only (a stray third argument is ignored). Keeping a value only if the function succeeds requires `minimum_app_version` >= 2.1; older connectors' values are kept as soon as they're stored.
 
 ---
 ### getItem
@@ -1974,7 +1978,7 @@ Returns the `String` that was saved for that key in that store, or `undefined` i
 
 `clearItems()`
 
-All items in the feed's storage are removed — both the local and synced stores.
+All items in the feed's storage are removed — both the local and synced stores. Like [`setItem`](#setitem), this is kept only if the function succeeds.
 
 ---
 ### sleep
