@@ -66,7 +66,7 @@ function queryFeedForGenerator(did, feedId, feedName, feedAvatar) {
 
             let results = [];
             for (const item of jsonObject.feed) { 
-                let post = postForItem(item, false, new Date(lastTimestamp));
+                let post = passesTimelineSwitches(item) ? postForItem(item, false, new Date(lastTimestamp)) : null;
                 if (post != null) {
                     post.annotations = [annotation].concat(post.annotations ?? []);
                     results.push(post);

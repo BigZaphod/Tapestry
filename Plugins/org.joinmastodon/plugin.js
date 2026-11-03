@@ -28,6 +28,15 @@ async function verify() {
 
 var userId = getItem("userId");
 
+// Storage is per device, so a feed synced from another device has no userId until something fetches it. Called before
+// load builds items, and by performAction (mastodon-shared.js) when it's defined, as it is only for the connector that
+// has an account of its own.
+async function ensureAccountIdentity() {
+    if (getItem("userId") == null) {
+        setItem("userId", (await fetch(site + "/api/v1/accounts/verify_credentials").json())["id"]);
+    }
+}
+
 async function fetchFollowedTags() {
     try {
         const jsonArray = await fetch(`${site}/api/v1/followed_tags?limit=400`).json();
@@ -41,22 +50,16 @@ async function fetchFollowedTags() {
 
 async function load() {
     // Resolve once, up front: whether this (authenticated) instance supports authoring quote posts (Mastodon 4.5+ /
-    // API v7), into the module-level `quoteCapable` that postForItem reads. getInstance() is cached for a week, so
-    // this is a no-op fetch after the first.
+    // API v7), into the module-level `quoteCapable` that postForItem reads. getInstance() is cached for a week once a
+    // load succeeds.
     quoteCapable = supportsQuotePosts(await getInstance());
 
     // Ensure userId BEFORE any section builds items, not lazily in the statuses section: postForItem gates the
     // own-post actions (edit/delete) on it, and the sections run concurrently — home items built while a wiped
     // userId was still being re-fetched would import without those actions. Storage is wiped by the app's
-    // Clear Cache (it removes the feed's whole key/value domain), so this isn't a once-ever situation — and the
-    // clear can happen under a RUNNING context, so re-read storage here rather than trusting the module var
-    // (postForItem reads storage fresh; a stale var would skip the ensure and strand every item without the
-    // own-post actions until relaunch).
+    // Clear Cache (it removes the feed's whole key/value domain), so this isn't a once-ever situation.
+    await ensureAccountIdentity();
     userId = getItem("userId");
-    if (userId == null) {
-        userId = (await fetch(site + "/api/v1/accounts/verify_credentials").json())["id"];
-        setItem("userId", userId);
-    }
 
     // NOTE: The home timeline will be filled up to the endDate, if possible.
     let endDate = null;
@@ -65,13 +68,12 @@ async function load() {
         endDate = new Date(parseInt(endDateTimestamp));
     }
 
-    // The three sections are independent, so run them concurrently — each delivers its items via
+    // The sections are independent, so run them concurrently — each delivers its items via
     // processResults() as it finishes. (Within a section, ordering-dependent work — followed tags before the
     // home query, home pagination — stays sequential.)
     const tasks = [];
-    // Reference points to store once the whole load has succeeded: a failed load's results are thrown away, so storing
-    // one sooner would skip what it covered.
-    const advances = [];
+    // Each section stores its reference point when it finishes. What load stores is kept only once its items are saved,
+    // so items that are lost are fetched again.
 
     if (includeHome == "on") {
         tasks.push((async () => {
@@ -82,7 +84,7 @@ async function load() {
             const newestItemDate = parameters[1];
             processResults(results);
             if (newestItemDate) {
-                advances.push(["endDateTimestamp", String(newestItemDate.getTime())]);
+                setItem("endDateTimestamp", String(newestItemDate.getTime()));
             }
             console.log(`==== HOME END`);
         })());
@@ -100,16 +102,12 @@ async function load() {
 
     // Activity is always returned, whatever the switches above say: they decide what the timeline shows, and
     // someone who keeps mentions out of their timeline still expects them in Activity.
-    tasks.push(queryNotifications(conversationTypes, "conversationsNewestId", advances));
-    tasks.push(queryNotifications(reactionTypes, "reactionsNewestId", advances));
+    tasks.push(queryNotifications(conversationTypes, "conversationsNewestId"));
+    tasks.push(queryNotifications(reactionTypes, "reactionsNewestId"));
 
     await Promise.all(tasks);
 
-    for (const [key, value] of advances) {
-        setItem(key, value);
-    }
-
-    // All done — returning from load() ends the load (items were delivered incrementally above).
+    // Returning ends the load: what processResults collected goes to the app as one batch.
     console.log(`==== LOAD COMPLETE`);
 }
 
@@ -245,7 +243,7 @@ const activityTypes = {
     follow_request: "follow-request"
 };
 
-// Requested apart, each with its own reference point, so a flood of likes can only cost likes, never a reply or a follow
+// Requested apart, each with its own reference point, so a flood of likes can only delay likes, never a reply or a follow
 // request. Mastodon ignores a type it doesn't know (`quote` is 4.5+).
 const conversationTypes = ["mention", "quote", "follow_request"];
 const reactionTypes = ["favourite", "reblog", "follow"];
@@ -254,13 +252,27 @@ const reactionTypes = ["favourite", "reblog", "follow"];
 const notificationCap = 800;
 const notificationMaxAge = 30 * 24 * 60 * 60 * 1000;
 
-// With a reference point, forward from it, oldest first: someone catching up reads on from where they were, so nothing
+// Ids are ordered, and a later one is never shorter. Mastodon's are numbers; some servers' aren't.
+function isIdAfter(id, other) {
+    return id.length != other.length ? id.length > other.length : id > other;
+}
+
+// Every load reads the newest page, and that's all of it when the page reaches the reference point: anything missed that's
+// still in the page comes back, whatever the reason, and what's already here collapses by id. A longer backlog reads
+// forward from the reference point instead, oldest first: someone catching up reads on from where they were, so nothing
 // may be missing above them. Without one, a new feed, newest first, as far back as Tapestry keeps: no one's reading yet.
 async function fetchNotifications(types, key) {
     const stored = getItem(key);
     const query = types.map(type => `types%5B%5D=${type}`).join("&");
     const url = `${site}/api/v1/notifications?limit=80&${query}`;
     const oldest = Date.now() - notificationMaxAge;
+
+    if (stored != null) {
+        const latest = await fetch(url).json();
+        if (latest.length < 80 || !isIdAfter(latest[latest.length - 1].id, stored)) {
+            return { notifications: latest, newestId: latest[0]?.id ?? stored };
+        }
+    }
 
     let notifications = [];
     let newestId = stored;
@@ -289,7 +301,7 @@ async function fetchNotifications(types, key) {
     return { notifications, newestId };
 }
 
-async function queryNotifications(types, key, advances) {
+async function queryNotifications(types, key) {
     const { notifications, newestId } = await fetchNotifications(types, key);
     const results = [];
     for (const notification of notifications) {
@@ -304,7 +316,7 @@ async function queryNotifications(types, key, advances) {
     console.log(`==== NOTIFICATIONS ${key} results = ${results.length}`);
     processResults(results);
     if (newestId != null) {
-        advances.push([key, newestId]);
+        setItem(key, newestId);
     }
 }
 

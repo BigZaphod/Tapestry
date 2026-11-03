@@ -55,7 +55,7 @@ function queryList(did, listId) {
 			
             let results = [];
             for (const item of jsonObject.feed) { 
-                let post = postForItem(item, false);
+                let post = passesTimelineSwitches(item) ? postForItem(item, false) : null;
                 if (post != null) {
                     results.push(post);
                 }

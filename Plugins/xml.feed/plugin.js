@@ -19,7 +19,7 @@ function feedName(title, ...urls) {
 }
 
 async function verify() {
-    let xml = await sendRequest(site)
+    let xml = await fetch(site).text()
     let jsonObject = await xmlParse(xml);
     
     if (jsonObject.feed != null) {
@@ -48,7 +48,7 @@ async function verify() {
                 icon: icon,
                 baseUrl: baseUrl
             };
-            processVerification(verification);
+            return verification;
         }
         if (baseUrl != null && icon === null) {
             let siteUrl = baseUrl.split("/").splice(0,3).join("/");
@@ -58,7 +58,7 @@ async function verify() {
                 icon: icon,
                 baseUrl: baseUrl
             };
-            processVerification(verification);
+            return verification;
         }
         else {
             // try to get icon from the feed
@@ -84,7 +84,7 @@ async function verify() {
                     icon: icon,
                     baseUrl: baseUrl
                 };
-                processVerification(verification);
+                return verification;
             }
             else {
                 const verification = {
@@ -92,7 +92,7 @@ async function verify() {
                     icon: null,
                     baseUrl: baseUrl
                 };
-                processVerification(verification);
+                return verification;
             }
         }
         
@@ -115,7 +115,7 @@ async function verify() {
 //					icon: icon,
 //					baseUrl: baseUrl
 //				};
-//				processVerification(verification);
+//				return verification;
 //			}
     if (baseUrl != null) {
         let feedUrl = baseUrl.split("/").splice(0,3).join("/");
@@ -125,7 +125,7 @@ async function verify() {
             icon: icon,
             baseUrl: baseUrl
         };
-        processVerification(verification);
+        return verification;
     }
     else {
         const verification = {
@@ -133,7 +133,7 @@ async function verify() {
             icon: null,
             baseUrl: null
         };
-        processVerification(verification);
+        return verification;
     }
     }
     else if (jsonObject["rdf:RDF"] != null) {
@@ -150,7 +150,7 @@ async function verify() {
 // 					icon: icon,
 // 					baseUrl: baseUrl
 // 				};
-// 				processVerification(verification);
+// 				return verification;
 // 			}
     let feedUrl = baseUrl.split("/").splice(0,3).join("/");
     let icon = await lookupIcon(feedUrl);
@@ -159,22 +159,21 @@ async function verify() {
         icon: icon,
         baseUrl: baseUrl
     };
-    processVerification(verification);
+    return verification;
     }
     else {
         // Unknown
-        processError(Error("Unknown feed format"));
+        throw new Error("Unknown feed format");
     }
 }
 
 
 async function load() {
-    const response = await sendConditionalRequest(site)
+    const response = await fetch.conditional(site).text()
 
     if (!response) {
         // null response means 304 Not Modified
-        processResults([]);
-        return;
+        return [];
     }
     
     let jsonObject = await xmlParse(response);
@@ -359,7 +358,7 @@ async function load() {
             results.push(resultItem);
         }
 
-        processResults(results);
+        return results;
     }
     else if (jsonObject.rss != null && jsonObject.rss.channel != null) {
         // RSS 2.0
@@ -494,7 +493,7 @@ async function load() {
             results.push(resultItem);
         }
 
-        processResults(results);
+        return results;
     }
     else if (jsonObject["rdf:RDF"] != null) {
         // RSS 1.0
@@ -568,11 +567,11 @@ async function load() {
             results.push(resultItem);
         }
 
-        processResults(results);
+        return results;
     }
     else {
         // Unknown
-        processResults([]);
+        return [];
     }
 }
 

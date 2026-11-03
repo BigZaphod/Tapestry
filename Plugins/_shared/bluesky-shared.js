@@ -86,6 +86,23 @@ function parentPostForItem(item, includeActions, results) {
     }
 }
 
+// Whether the feed's switches let a post into a timeline. They only choose what a timeline shows: a post that arrives
+// any other way (an activity's subject, a thread, an action's result) is built whatever they say.
+function passesTimelineSwitches(item) {
+    const isRepost = item.reason != null && item.reason.$type == "app.bsky.feed.defs#reasonRepost";
+    const isReply = item.reply?.parent != null && item.post.author.handle != item.reply.parent?.author?.handle;
+    if (isRepost && includeReposts != "on") {
+        return false;
+    }
+    if (isReply && !isRepost && includeReplies != "on") { // show replies only if they are not reposted
+        return false;
+    }
+    if (item.post.embed?.$type?.startsWith("app.bsky.embed.record") && includeQuotes != "on") {
+        return false;
+    }
+    return true;
+}
+
 function postForItem(item, includeActions = false, dateOverride = null, allowRepliesFromOthers = true) {
     // Bluesky places a post at the EARLIER of when the server indexed it and the `createdAt` its author claims —
     // its own `sortAt` rule, reproduced here rather than taking `indexedAt` alone. Editing a post re-creates the
@@ -184,7 +201,6 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
     }
 
     // A reply for filtering purposes has a parent by a DIFFERENT author — a self-thread continuation doesn't count.
-    const isReply = item.reply?.parent != null && item.post.author.handle != item.reply.parent?.author?.handle;
     const isRepost = item.reason != null && item.reason.$type == "app.bsky.feed.defs#reasonRepost";
 
     if (isRepost) {
@@ -201,50 +217,29 @@ function postForItem(item, includeActions = false, dateOverride = null, allowRep
         }
     }
 
-    let showItem = true;
-    if (includeReposts != "on") {
-        if (isRepost) {
-            showItem = false;
-        }
+    let attachments = attachmentsForEmbed(item.post.embed);
+            
+    const itemIdentifier = item.post.uri.split("/").pop();
+    const postUri = uriPrefix + "/profile/" + author.handle + "/post/" + itemIdentifier;
+    
+    const post = Item.createWithUriDate(postUri, date);
+    post.body = content;
+    post.author = identity;
+    post.metadata = metadata;
+    for (const action of actions) {
+        post.actions.add(action);
     }
-    if (includeReplies != "on") {
-        if (isReply && !isRepost) { // show replies only if they are not reposted
-            showItem = false;
-        }
+    if (attachments != null) {
+        post.attachments = attachments
     }
-    if (includeQuotes != "on") {
-        if (item.post.embed?.$type?.startsWith("app.bsky.embed.record")) {
-            showItem = false;
-        }
+    if (annotations.length > 0) {
+        post.annotations = annotations;
     }
-
-    if (showItem) {
-        let attachments = attachmentsForEmbed(item.post.embed);
-                
-        const itemIdentifier = item.post.uri.split("/").pop();
-        const postUri = uriPrefix + "/profile/" + author.handle + "/post/" + itemIdentifier;
-        
-        const post = Item.createWithUriDate(postUri, date);
-        post.body = content;
-        post.author = identity;
-        post.metadata = metadata;
-        for (const action of actions) {
-            post.actions.add(action);
-        }
-        if (attachments != null) {
-            post.attachments = attachments
-        }
-        if (annotations.length > 0) {
-            post.annotations = annotations;
-        }
-        if (contentWarning != null) {
-            post.contentWarning = contentWarning;
-        }
-        
-        return post;
+    if (contentWarning != null) {
+        post.contentWarning = contentWarning;
     }
     
-    return null;
+    return post;
 }
 
 function postForEmbeddedRecord(record) {
@@ -1233,6 +1228,16 @@ function suggestHashtags(query) {
 }
 
 async function performAction(actionId, target, actionValue) {
+    // Own-post actions on the item this returns depend on the account's identity. Best effort: the action itself doesn't
+    // need it, so failing to fetch it mustn't fail the action.
+    if (typeof ensureAccountIdentity == "function") {
+        try {
+            await ensureAccountIdentity();
+        } catch (error) {
+            console.log(`ensureAccountIdentity failed (non-fatal): ${error}`);
+        }
+    }
+
     // Post uri/cid/rkey live in item.metadata; older items stored them as a JSON string under the action value — fall
     // back for those. The host always passes `metadata` (an empty `{}` on an older item), so test for the uri rather
     // than the bag. `target` is null for a feed-targeted action (newPost), so `?.`.
@@ -1362,7 +1367,7 @@ async function performAction(actionId, target, actionValue) {
         // Rebuild the target from the thread response instead of reusing the item that launched the action: only the
         // thread's own postView carries `viewer`, so this is where a post that arrived without one — a quote embed,
         // say — picks up its real like/repost state and stops being the one actionless post in its own thread. Fall
-        // back to the original when the node is blocked or filtered out by the user's settings.
+        // back to the original when the node is blocked.
         const rebuiltTarget = firstItem.post != null ? postForItem(firstItem, true) : null;
         results.push(rebuiltTarget ?? target);
 

@@ -26,10 +26,10 @@ async function load() {
 	
     const endpoint = `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/${summaryName}.geojson`;
 
-    let text = await sendConditionalRequest(endpoint)
+    let text = await fetch.conditional(endpoint).text()
     
     if (!text) {
-        return processResults([]);
+        return [];
     }
     
     const jsonObject = JSON.parse(text);
@@ -56,5 +56,5 @@ async function load() {
         
         results.push(resultItem);
     }
-    processResults(results);
+    return results;
 }

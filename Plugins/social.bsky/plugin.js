@@ -23,6 +23,15 @@ async function verify() {
     };
 }
 
+// Storage is per device, so a feed synced from another device has no didSelf until something fetches it. Called before
+// load builds items, and by performAction (bluesky-shared.js) when it's defined, as it is only for the connector that
+// has an account of its own.
+async function ensureAccountIdentity() {
+    if (getItem("didSelf") == null) {
+        setItem("didSelf", await getSessionDid());
+    }
+}
+
 async function load() {
     // NOTE: The timeline will be filled up to the endDate, if possible.
     let endDate = null;
@@ -31,19 +40,14 @@ async function load() {
         endDate = new Date(parseInt(endDateTimestamp));
     }
 
-    let didSelf = getItem("didSelf");
-    if (didSelf == null) {
-        didSelf = await getSessionDid();
-        setItem("didSelf", didSelf);
-    }
+    await ensureAccountIdentity();
 
     // The sections are independent, so run them concurrently — each delivers its items via processResults() as it
     // finishes. (The session DID lookup above is a shared prerequisite, and each section's cursor pagination chains —
     // both stay sequential.)
     const tasks = [];
-    // Reference points to store once the whole load has succeeded: a failed load's results are thrown away, so storing
-    // one sooner would skip what it covered.
-    const advances = [];
+    // Each section stores its reference point when it finishes. What load stores is kept only once its items are saved,
+    // so items that are lost are fetched again.
 
     if (includeHome == "on") {
         tasks.push((async () => {
@@ -52,23 +56,19 @@ async function load() {
             const newestItemDate = parameters[1];
             processResults(results);
             if (newestItemDate != null) {
-                advances.push(["endDateTimestamp", String(newestItemDate.getTime())]);
+                setItem("endDateTimestamp", String(newestItemDate.getTime()));
             }
         })());
     }
 
     // Activity is always returned, whatever the switches above say: they decide what the timeline shows, and
     // someone who keeps mentions out of their timeline still expects them in Activity.
-    tasks.push(queryNotifications(conversationReasons, "conversationsNewestDate", advances));
-    tasks.push(queryNotifications(reactionReasons, "reactionsNewestDate", advances));
+    tasks.push(queryNotifications(conversationReasons, "conversationsNewestDate"));
+    tasks.push(queryNotifications(reactionReasons, "reactionsNewestDate"));
 
     await Promise.all(tasks);
 
-    for (const [key, value] of advances) {
-        setItem(key, value);
-    }
-
-    // All done — returning from load() ends the load (items were delivered incrementally above).
+    // Returning ends the load: what processResults collected goes to the app as one batch.
 }
 
 function queryTimeline(endDate) {
@@ -109,7 +109,7 @@ function queryTimeline(endDate) {
 
                 const items = jsonObject.feed
                 for (const item of items) {
-                    const post = postForItem(item, true, null, false);
+                    const post = passesTimelineSwitches(item) ? postForItem(item, true, null, false) : null;
                     if (post != null) {
                         results.push(post);
 						
@@ -186,12 +186,16 @@ const reactionReasons = ["like", "repost", "follow", "like-via-repost", "repost-
 // How many to take in one load, and how far back a new feed reaches.
 const notificationCap = 800;
 const notificationMaxAge = 30 * 24 * 60 * 60 * 1000;
+// A notification's `indexedAt` is the date its record claims, not when it reached the server, so one that arrives late
+// sorts below events already seen. Each load reads this far past the stored date; an event seen twice is one event.
+const notificationOverlap = 60 * 60 * 1000;
 
 // Newest first, back to the stored date: Bluesky's cursors only go backward. It all arrives in one load, so a reader
-// catching up has no hole above them; only a backlog past the cap loses anything, its oldest.
+// catching up has no hole above them. A backlog past the cap loses its oldest. The newest page is always read whole:
+// anything missed that's still in it comes back, whatever the reason, and what's already here collapses by id.
 async function fetchNotifications(reasons, key) {
     const stored = getItem(key);
-    const oldest = stored != null ? parseInt(stored) : Date.now() - notificationMaxAge;
+    const oldest = stored != null ? parseInt(stored) - notificationOverlap : Date.now() - notificationMaxAge;
     const query = reasons.map((reason) => `reasons=${reason}`).join("&");
     const url = `${site}/xrpc/app.bsky.notification.listNotifications?limit=100&${query}`;
 
@@ -208,7 +212,7 @@ async function fetchNotifications(reasons, key) {
             newestDate = String(new Date(batch[0].indexedAt).getTime());
         }
         const fresh = batch.filter((notification) => new Date(notification.indexedAt).getTime() >= oldest);
-        notifications.push(...fresh);
+        notifications.push(...(cursor == null ? batch : fresh));
         if (fresh.length < batch.length || page.cursor == null) {
             break;
         }
@@ -226,7 +230,7 @@ function subjectUri(notification) {
     return conversationReasons.includes(notification.reason) ? notification.uri : notification.record?.subject?.uri;
 }
 
-async function queryNotifications(reasons, key, advances) {
+async function queryNotifications(reasons, key) {
     const { notifications, newestDate } = await fetchNotifications(reasons, key);
 
     // A notification carries only the bare record — no viewer state, no counts — so the post's actions can't be built
@@ -241,7 +245,7 @@ async function queryNotifications(reasons, key, advances) {
         }
         const view = views.get(notification.uri);
         const showsInTimeline = (notification.reason == "mention" && includeMentions == "on") || (notification.reason == "reply" && includeReplies == "on");
-        if (showsInTimeline && view != null) {
+        if (showsInTimeline && view != null && passesTimelineSwitches({ post: view })) {
             const post = postForItem({ post: view }, true);
             if (post != null) {
                 post.annotations = [Annotation.createWithText(notification.reason.toUpperCase())];
@@ -251,7 +255,7 @@ async function queryNotifications(reasons, key, advances) {
     }
     processResults(results);
     if (newestDate != null) {
-        advances.push([key, newestDate]);
+        setItem(key, newestDate);
     }
 }
 

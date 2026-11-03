@@ -786,6 +786,16 @@ async function answerFollowRequest(actionId, request) {
 }
 
 async function performAction(actionId, target, actionValue) {
+    // Own-post actions on the item this returns depend on the account's identity. Best effort: the action itself doesn't
+    // need it, so failing to fetch it mustn't fail the action.
+    if (typeof ensureAccountIdentity == "function") {
+        try {
+            await ensureAccountIdentity();
+        } catch (error) {
+            console.log(`ensureAccountIdentity failed (non-fatal): ${error}`);
+        }
+    }
+
     // Status id lives on item.metadata; older items stored it as the action value — fall back for those.
     // `target` is null for a feed-targeted action (newPost) — the `?.` keeps that from throwing here.
     const id = target?.metadata?.id ?? actionValue;

@@ -4,12 +4,12 @@
 // Apple requirements: https://podcasters.apple.com/support/823-podcast-requirements
 
 async function verify() {
-    let xml = await sendRequest(site);
+    let xml = await fetch(site).text();
     let jsonObject = await xmlParse(xml);
     
     if (jsonObject.feed != null) {
         // Atom 1.0
-        processError(Error("Invalid feed format"));
+        throw new Error("Invalid feed format");
     }
     else if (jsonObject.rss != null) {
         // RSS 2.0
@@ -35,30 +35,29 @@ async function verify() {
             icon: icon,
             baseUrl: baseUrl
         };
-        processVerification(verification);
+        return verification;
     }
     else {
         // Unknown
-        processError(Error("Unknown feed format"));
+        throw new Error("Unknown feed format");
     }
 }
 
 const episodeRegex = /[0-9]+$/;
 
 async function load() {
-    const response = await sendConditionalRequest(site);
+    const response = await fetch.conditional(site).text();
 
     if (!response) {
         // null response means 304 Not Modified
-        processResults([]);
-        return;
+        return [];
     }
     
     let jsonObject = await xmlParse(response);
             
     if (jsonObject.feed != null) {
         // Atom 1.0
-        processError(new Error("Invalid feed format"));
+        throw new Error("Invalid feed format");
     }
     else if (jsonObject.rss != null) {
         // RSS 2.0
@@ -160,10 +159,10 @@ async function load() {
             results.push(resultItem);
         }
 
-        processResults(results);
+        return results;
     }
     else {
         // Unknown
-        processResults([]);
+        return [];
     }
 }

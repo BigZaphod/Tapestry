@@ -2,7 +2,7 @@
 // org.jsonfeed
 
 async function verify() {
-    let text = await sendRequest(site);
+    let text = await fetch(site).text();
     const jsonObject = JSON.parse(text);
     
     const baseUrl = jsonObject["home_page_url"];
@@ -18,7 +18,7 @@ async function verify() {
             icon: icon,
             baseUrl: baseUrl
         };
-        processVerification(verification);
+        return verification;
     }
     else {
         let icon = await lookupIcon(baseUrl);
@@ -27,17 +27,16 @@ async function verify() {
             icon: icon,
             baseUrl: baseUrl
         };
-        processVerification(verification);
+        return verification;
     }
 }
 
 async function load() {
-    const response = await sendConditionalRequest(site);
+    const response = await fetch.conditional(site).text();
 
     if (!response) {
         // null response means 304 Not Modified
-        processResults([]);
-        return;
+        return [];
     }
     
     const jsonObject = JSON.parse(response);
@@ -111,5 +110,5 @@ async function load() {
         results.push(resultItem);
     }
 
-    processResults(results);
+    return results;
 }
