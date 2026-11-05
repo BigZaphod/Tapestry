@@ -685,12 +685,8 @@ function contentForRecord(record) {
                         content = prefix + link + suffix;
                     }
                     else if (feature.$type == "app.bsky.richtext.facet#tag") {
-                        //console.log(`tag feature = ${JSON.stringify(feature)}`);
                         const link = `<a href="${uriPrefix}/hashtag/${feature.tag}">${text}</a>`;
                         content = prefix + link + suffix;
-                    }
-                    else {
-                        console.log(`skipped feature.$type = ${feature.$type}`);
                     }
                 }
             }

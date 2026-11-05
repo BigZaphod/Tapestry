@@ -51,7 +51,6 @@ async function load() {
             const urlClean = url.split("?").splice(0,1).join();
             const urlParameters = url.split("?").splice(1).join("?");
             if (urlParameters.includes("utm_id") || urlParameters.includes("utm_source") || urlParameters.includes("utm_medium") || urlParameters.includes("utm_campaign")) {
-                console.log(`removed parameters: ${urlParameters}`);
                 url = urlClean;
             }
         }

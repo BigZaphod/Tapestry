@@ -31,13 +31,9 @@ function load() {
     let lastUpdate = getItem("lastUpdate");
     if (lastUpdate != null) {
         let lastUpdateTimestamp = parseInt(lastUpdate);
-        console.log(`lastUpdateTimestamp = ${new Date(lastUpdateTimestamp)}`);
-        console.log(`updateInterval = ${updateInterval}`);
         let futureTimestamp = (lastUpdateTimestamp + updateInterval);
-        console.log(`futureTimestamp = ${new Date(futureTimestamp)}`);
         if (nowTimestamp < futureTimestamp) {
             // time has not elapsed, do not load
-            console.log(`time until next update = ${(futureTimestamp - nowTimestamp) / 1000} sec.`);
             doUpdate = false;
         }
     }

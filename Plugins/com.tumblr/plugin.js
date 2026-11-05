@@ -36,16 +36,12 @@ async function load() {
         endDate = new Date(parseInt(endDateTimestamp));
     }
 
-    let startTimestamp = (new Date()).getTime();
-
     const parameters = await queryDashboard(endDate);
     const results = parameters[0];
     const newestItemDate = parameters[1];
     if (newestItemDate) {
         setItem("endDateTimestamp", String(newestItemDate.getTime()));
     }
-    let endTimestamp = (new Date()).getTime();
-    console.log(`finished dashboard: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
     return results;
 }
 
@@ -68,25 +64,18 @@ async function queryDashboard(endDate) {
         function requestBatch(id, endDate, pass, resolve, reject, results = []) {
             let url = null
             if (id == null) {
-                //console.log("offset = none");
                 url = `${site}/v2/user/dashboard?npf=true&reblog_info=true&notes_info=true&limit=20`;
             }
             else {
                 const offset = pass * 20;
-                //console.log(`offset = ${offset}`);
                 url = `${site}/v2/user/dashboard?npf=true&reblog_info=true&notes_info=true&limit=20&offset=${offset}`;
             }
-			
-            console.log(`==== REQUEST id = ${id}, pass = ${pass}`);
-			
+
             fetch(url).json()
             .then((jsonObject) => {
-                let firstId = null;
-                let firstDate = null;
                 let lastId = null;
-                let lastDate = null;
                 let endUpdate = false;
-				
+
                 const items = jsonObject.response.posts;
                 for (const item of items) {
                     const post = postForItem(item);
@@ -94,48 +83,30 @@ async function queryDashboard(endDate) {
                         results.push(post);
 
                         const date = post.date;
+                        lastId = item["id"];
 
-                        const currentId = item["id"];
-                        if (firstId == null) {
-                            firstId = currentId;
-                            firstDate = date;
-                        }
-                        lastId = currentId;						
-                        lastDate = date;
-						
                         if (!endUpdate && date < endDate) {
-                            console.log(`>>>> END date = ${date}`);
                             endUpdate = true;
                         }
                         if (date > newestItemDate) {
-                            console.log(`>>>> NEW date = ${date}`);
                             newestItemDate = date;
                         }
                         if (date < oldestItemDate) {
-                            console.log(`>>>> OLD date = ${date}`);
                             endUpdate = true;
                         }
                     }
                 }
-				
+
                 if (id == lastId) {
-                    console.log(`>>>> ID MATCH`);
                     endUpdate = true;
                 }
                 if (pass >= 20) {
-                    console.log(`>>>> PASS OVERFLOW`);
                     endUpdate = true;
                 }
                 if (results.length > maxItems) {
-                    console.log(`>>>> MAX`);
                     endUpdate = true;
                 }
-				
-                console.log(`>>>> BATCH results = ${results.length}, lastId = ${lastId}, endUpdate = ${endUpdate}`);
-                console.log(`>>>>       first  = ${firstDate}`);
-                console.log(`>>>>       last   = ${lastDate}`);
-                console.log(`>>>>       newest = ${newestItemDate}`);
-				
+
                 if (!endUpdate && lastId != null) {
                     requestBatch(lastId, endDate, pass + 1, resolve, reject, results);
                 }
@@ -148,12 +119,9 @@ async function queryDashboard(endDate) {
             });	
         }
 
-        console.log(`>>>> START endDate = ${endDate}`);
-		
         let nowTimestamp = (new Date()).getTime();
         let pastTimestamp = (nowTimestamp - maxInterval);
         oldestItemDate = new Date(pastTimestamp);
-        console.log(`>>>> OLD date = ${oldestItemDate}`);
 			
         requestBatch(null, endDate, 0, resolve, reject);
     });

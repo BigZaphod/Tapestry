@@ -124,11 +124,6 @@ async function performAction(actionId, item, actionValue) {
     }
 }
 
-function test(item)
-{
-    console.log(`item = ${item}`);
-}
-
 async function sendAction(url, parameters) {
     const extraHeaders = { "content-type": "application/json; charset=utf8", "accept": "application/json" };
     const response = await fetch.post(url, { body: parameters, headers: extraHeaders }).response();
@@ -187,7 +182,6 @@ function postForNote(note) {
                 let textFormats = note.formatting;
                 if (textFormats != null && textFormats.length > 0) {
                     let formattedText = formatText(text, textFormats);
-                    //console.log(`    formattedText = ${formattedText}`);
                     text = formattedText;
                 }
             }
@@ -523,14 +517,12 @@ function processContentBlocks(contentBlocks, contentLayouts) {
 
     let blockIndex = 0;
     for (const contentBlock of contentBlocks) {
-        //console.log(`  [${blockIndex}] contentBlock.type = ${contentBlock.type}`);
         switch (contentBlock.type) {
         case "text":
             let text = contentBlock.text;
             let textFormats = contentBlock.formatting;
             if (textFormats != null && textFormats.length > 0) {
                 let formattedText = formatText(text, textFormats);
-                //console.log(`    formattedText = ${formattedText}`);
                 text = formattedText;
             }
 			
@@ -668,7 +660,6 @@ function formatText(text, textFormats) {
     let result = breakText(range);
     applyItems(result.items, 0, codePoints);
     let formattedText = String.fromCodePoint(...codePoints)
-    //console.log(`test: formattedText = ${formattedText}`);
     return formattedText;
 	
     function breakText(range) {
@@ -710,7 +701,6 @@ function formatText(text, textFormats) {
 
                 let replacement = [...capturePrefix, ...original, ...captureSuffix];
 
-                //console.log(`capture ${captureIndex} = ${String.fromCodePoint(...replacement)}`);
                 item = { start: captureRange[0], length: captureRange[1] - captureRange[0], replacement: replacement};
                 items.push(item);
 
@@ -722,7 +712,6 @@ function formatText(text, textFormats) {
                     let suffix = formatSuffix(remainderIndex);
                     let slice = codePoints.slice(remainderRange[0], remainderRange[1]);
                     let replacement = [...prefix, ...slice, ...suffix];
-                    //console.log(`capture remainder ${index} = ${String.fromCodePoint(...replacement)} (${type}) range = ${remainderRange}`);
                     item = { start: remainderRange[0], length: remainderRange[1] - remainderRange[0], replacement: replacement};
                     items.push(item);
                 }
@@ -746,7 +735,6 @@ function formatText(text, textFormats) {
 	
     function formatRange(index) {
         if (index < textFormats.length) {
-            //console.log(`formatRange index = ${index}`);
             return [textFormats[index].start, textFormats[index].end];
         }
         return null;

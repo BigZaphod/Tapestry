@@ -38,16 +38,12 @@ async function load() {
         endDate = new Date(parseInt(endDateTimestamp));
     }
 
-    let startTimestamp = (new Date()).getTime();
-
     const parameters = await queryTimeline(endDate);
     const results = parameters[0];
     const newestItemDate = parameters[1];
     if (newestItemDate) {
         setItem("endDateTimestamp", String(newestItemDate.getTime()));
     }
-    let endTimestamp = (new Date()).getTime();
-    console.log(`finished timeline: ${results.length} items in ${(endTimestamp - startTimestamp) / 1000} seconds`);
     return results;
 }
 
@@ -66,20 +62,14 @@ async function queryTimeline(endDate) {
     async function requestBatch(endDate, href, newestItemDate, oldestItemDate, results = []) {
         let url = null
         if (href == null) {
-            console.log("href = none");
             url = `${site}/v2/communities/${communityHandle}/timeline`;
         }
         else {
-            console.log(`href = ${href}`);
             url = `${site}${href}`;
         }
 
-        console.log(`==== REQUEST communityHandle = ${communityHandle}`);
-		
         const jsonObject = await fetch(url).json();
 
-        let firstDate = null;
-        let lastDate = null;
         let endUpdate = false;
 
         const timeline = jsonObject.response.timeline;
@@ -98,36 +88,22 @@ async function queryTimeline(endDate) {
 				
                 const date = post.date;
 
-                if (href == null) {
-                    firstDate = date;
-                }
-                lastDate = date;
-				
                 if (!endUpdate && date < endDate) {
-                    console.log(`>>>> END date = ${date}`);
                     endUpdate = true;
                 }
                 if (date > newestItemDate) {
-                    console.log(`>>>> NEW date = ${date}`);
                     newestItemDate = date;
                 }
                 if (date < oldestItemDate) {
-                    console.log(`>>>> OLD date = ${date}`);
                     endUpdate = true;
                 }
             }
         }
-						
+
         if (results.length > maxItems) {
-            console.log(`>>>> MAX`);
             endUpdate = true;
         }
-		
-        console.log(`>>>> BATCH results = ${results.length}, endUpdate = ${endUpdate}`);
-        console.log(`>>>>       first  = ${firstDate}`);
-        console.log(`>>>>       last   = ${lastDate}`);
-        console.log(`>>>>       newest = ${newestItemDate}`);
-		
+
         if (!endUpdate && nextHref != null) {
             return await requestBatch(endDate, nextHref, newestItemDate, oldestItemDate, results);
         }
@@ -136,12 +112,9 @@ async function queryTimeline(endDate) {
         }
     }
 
-    console.log(`>>>> START endDate = ${endDate}`);
-	
     const nowTimestamp = (new Date()).getTime();
     const pastTimestamp = (nowTimestamp - maxInterval);
     const oldestItemDate = new Date(pastTimestamp);
-    console.log(`>>>> OLDEST date = ${oldestItemDate}`);
 	
     const parameters = await requestBatch(endDate, null, null, oldestItemDate);
     const results = parameters[0];

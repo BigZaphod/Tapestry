@@ -89,22 +89,14 @@ function queryTimeline(endDate) {
         function requestToCursor(cursor, endDate, resolve, reject, results = []) {
             let url = null
             if (cursor == null) {
-                //console.log("cursor = none");
                 url = `${site}/xrpc/app.bsky.feed.getTimeline?algorithm=reverse-chronological&limit=50`;
             }
             else {
-                //console.log(`cursor = ${cursor}`);
                 url = `${site}/xrpc/app.bsky.feed.getTimeline?algorithm=reverse-chronological&limit=50&cursor=${cursor}`;
             }
-			
-            console.log(`==== REQUEST cursor = ${cursor}`);
-			
+
             fetch(url).json()
             .then((jsonObject) => {
-                let firstId = null;
-                let firstDate = null;
-                let lastId = null;
-                let lastDate = null;
                 let endUpdate = false;
 
                 const items = jsonObject.feed
@@ -118,40 +110,22 @@ function queryTimeline(endDate) {
                             date = new Date(item.reason.indexedAt); // date of the repost
                         }
 
-                        const currentId = item.post.uri.split("/").pop();
-
-                        if (firstId == null) {
-                            firstId = currentId;
-                            firstDate = date;
-                        }
-                        lastId = currentId;						
-                        lastDate = date;
-						
                         if (!endUpdate && date < endDate) {
-                            console.log(`>>>> END date = ${date}`);
                             endUpdate = true;
                         }
                         if (date > newestItemDate) {
-                            console.log(`>>>> NEW date = ${date}`);
                             newestItemDate = date;
                         }
                         if (date < oldestItemDate) {
-                            console.log(`>>>> OLD date = ${date}`);
                             endUpdate = true;
                         }
 
                     }
                 }
                 if (results.length > maxItems) {
-                    console.log(`>>>> MAX`);
                     endUpdate = true;
                 }
-				
-                console.log(`>>>> BATCH results = ${results.length}, lastId = ${lastId}, endUpdate = ${endUpdate}`);
-                console.log(`>>>>       first  = ${firstDate}`);
-                console.log(`>>>>       last   = ${lastDate}`);
-                console.log(`>>>>       newest = ${newestItemDate}`);
-				
+
                 const cursor = jsonObject.cursor;			
 
                 if (!endUpdate && cursor != null) {
@@ -166,12 +140,9 @@ function queryTimeline(endDate) {
             });	
         }
 
-        console.log(`>>>> START endDate = ${endDate}`);
-		
         let nowTimestamp = (new Date()).getTime();
         let pastTimestamp = (nowTimestamp - maxInterval);
         oldestItemDate = new Date(pastTimestamp);
-        console.log(`>>>> OLD date = ${oldestItemDate}`);
 
         requestToCursor(null, endDate, resolve, reject);
     });

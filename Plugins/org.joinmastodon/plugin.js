@@ -77,7 +77,6 @@ async function load() {
 
     if (includeHome == "on") {
         tasks.push((async () => {
-            console.log(`==== HOME START`);
             const followedTagNames = await fetchFollowedTags();
             const parameters = await queryHomeTimeline(endDate, followedTagNames);
             const results = parameters[0];
@@ -86,17 +85,12 @@ async function load() {
             if (newestItemDate) {
                 setItem("endDateTimestamp", String(newestItemDate.getTime()));
             }
-            console.log(`==== HOME END`);
         })());
     }
 
     if (includeStatuses == "on") {
         tasks.push((async () => {
-            console.log(`==== STATUSES START`);
-            const results = await queryStatusesForUser(userId);
-            console.log(`==== STATUSES END results = ${results.length}`);
-            processResults(results);
-            console.log(`==== STATUSES DONE`);
+            processResults(await queryStatusesForUser(userId));
         })());
     }
 
@@ -108,7 +102,6 @@ async function load() {
     await Promise.all(tasks);
 
     // Returning ends the load: what processResults collected goes to the app as one batch.
-    console.log(`==== LOAD COMPLETE`);
 }
 
 function queryHomeTimeline(endDate, followedTagNames) {
@@ -133,13 +126,10 @@ function queryHomeTimeline(endDate, followedTagNames) {
             else {
                 url = `${site}/api/v1/timelines/home?limit=40&since_id=1&max_id=${id}`;
             }
-			
-            console.log(`==== REQUEST id = ${id}`);
-			
+
             fetch(url).json()
             .then((jsonObject) => {
                 let lastId = null;
-                let lastDate = null;
                 let endUpdate = false;
                 for (const item of jsonObject) {
                     const date = new Date(item["created_at"]);
@@ -178,35 +168,26 @@ function queryHomeTimeline(endDate, followedTagNames) {
                     }
 
                     if (!endUpdate && date < endDate) {
-                        console.log(`>>>> END date = ${date}`);
                         endUpdate = true;
                     }
                     if (date > newestItemDate) {
-                        console.log(`>>>> NEW date = ${date}`);
                         newestItemDate = date;
                     }
                     if (date < oldestItemDate) {
-                        console.log(`>>>> OLD date = ${date}`);
                         endUpdate = true;
                     }
-					
+
                     if (post != null) {
                         results.push(post);
                     }
-		
+
                     lastId = item["id"];
-                    lastDate = date;
                 }
 
                 if (results.length > maxItems) {
-                    console.log(`>>>> MAX`);
                     endUpdate = true;
                 }
-				
-                console.log(`>>>> BATCH results = ${results.length}, lastId = ${lastId}, endUpdate = ${endUpdate}`);
-                console.log(`>>>>       last   = ${lastDate}`);
-                console.log(`>>>>       newest = ${newestItemDate}`);
-				
+
                 // NOTE: endUpdate signifies a date or count threshold has been reached, lastId indicates the API returned no items.
                 if (!endUpdate && lastId != null) {
                     requestToId(lastId, endDate, resolve, reject, results);
@@ -220,12 +201,9 @@ function queryHomeTimeline(endDate, followedTagNames) {
             });
         }
 
-        console.log(`>>>> START endDate = ${endDate}`);
-		
         let nowTimestamp = (new Date()).getTime();
         let pastTimestamp = (nowTimestamp - maxInterval);
         oldestItemDate = new Date(pastTimestamp);
-        console.log(`>>>> OLD date = ${oldestItemDate}`);
 			
         requestToId(null, endDate, resolve, reject);
 
@@ -315,7 +293,6 @@ async function queryNotifications(types, key) {
             results.push(postForItem(notification.status));
         }
     }
-    console.log(`==== NOTIFICATIONS ${key} results = ${results.length}`);
     processResults(results);
     if (newestId != null) {
         setItem(key, newestId);
