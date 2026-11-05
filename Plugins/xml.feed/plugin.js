@@ -279,19 +279,11 @@ async function load() {
             }
 
             var identity = null;
-            if (entry.author != null) {
-                let authorName = entry.author.name;
-                if (authorName != null) {
-                    if (authorName instanceof Array) {
-                        authorName = authorName.join(", ");
-                    }
-                    else {
-                        authorName = authorName.trim();
-                    }
-                    identity = Identity.createWithName(authorName);
-                    if (entry.author.uri != null) {
-                        identity.uri = entry.author.uri;
-                    }
+            const entryAuthorName = authorText(entry.author);
+            if (entryAuthorName != null) {
+                identity = Identity.createWithName(entryAuthorName);
+                if (entry.author.uri != null) {
+                    identity.uri = entry.author.uri;
                 }
             }
             
@@ -414,14 +406,8 @@ async function load() {
             }
 
             let identity = null;
-            let authorName = item["dc:creator"] ?? item["author"];
+            const authorName = authorText(item["dc:creator"] ?? item["author"]);
             if (authorName != null) {
-                if (authorName instanceof Array) {
-                    authorName = authorName.join(", ");
-                }
-                else {
-                    authorName = authorName.trim();
-                }
                 identity = Identity.createWithName(authorName);
                 identity.uri = feedUrl;
             }
@@ -529,14 +515,8 @@ async function load() {
             let content = extractString(item.description, true);
 
             let identity = null;
-            let authorName = item["dc:creator"];
+            const authorName = authorText(item["dc:creator"]);
             if (authorName != null) {
-                if (authorName instanceof Array) {
-                    authorName = authorName.join(", ");
-                }
-                else {
-                    authorName = authorName.trim();
-                }
                 identity = Identity.createWithName(authorName);
                 identity.uri = feedUrl;
             }
@@ -590,6 +570,23 @@ function attachmentForAttributes(mediaAttributes) {
         }
     }
     return attachment;
+}
+
+// An author's name as text, or null when there's none to find. The specs make it a string, but feeds also
+// nest Atom-style children in an RSS item (`<author><name>…</name></author>`, Google's Cloud blog), and any
+// of these can repeat, which joins the names.
+function authorText(node) {
+    if (node instanceof Array) {
+        const names = node.map(authorText).filter(name => name != null);
+        return names.length > 0 ? names.join(", ") : null;
+    }
+    if (typeof(node) == "string") {
+        return node.trim();
+    }
+    if (node?.name != null) {
+        return authorText(node.name);
+    }
+    return null;
 }
 
 function extractString(node, allowHTML = false) {
