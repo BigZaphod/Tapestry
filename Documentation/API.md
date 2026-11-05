@@ -22,7 +22,9 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Activity.** A connector can report what happens *to* the user — replies, mentions, likes, follows — by declaring its types in [`activities.json`](#activitiesjson) and returning [`Activity`](#activity-1) objects from `load()` alongside its items. See [Activity](#activity) in Concepts.
 
-**Semantics are shared.** The `semantic` vocabulary actions use now also describes activity types, and gains `mention` and `follow`. See [Semantics](#semantics).
+**Semantics are shared.** The `semantic` vocabulary actions use now also describes activity types, and gains `mention`, `follow`, and `message`. See [Semantics](#semantics).
+
+**Annotations can be prominent.** An annotation marked [`prominent`](#prominent-boolean) is drawn as a pill, for what an item is to the user: a reply to them, a mention, a private message. Older versions show it as plain text.
 
 **Identities have a description.** An `Identity` can carry a short [`description`](#description-string), such as a follower count, shown under the name where a person is shown as a card of their own, as the follower in Activity's "followed you" is.
 
@@ -449,7 +451,7 @@ activity.author = identity;
 
 #### type: String (required)
 
-The `id` of a type declared in [`activities.json`](#activitiesjson). First in `create` because it's the broadest thing about an activity.
+The `id` of a type declared in [`activities.json`](#activitiesjson). First in `create` because it's the broadest thing about an activity. An activity of a type the manifest doesn't declare is kept but not shown, since another device may run a connector version that declares it.
 
 #### uri: String (required)
 
@@ -457,11 +459,11 @@ Identifies the event within its type: unique per event and stable across loads.
 
 #### date: Date (required)
 
-When it happened, by the server's clock. A future date from `load()` is handled the same as an item's [`date`](#date-date-required).
+When it happened, by the server's clock. A future date from `load()` is handled the same as an item's [`date`](#date-date-required). An activity more than 30 days old is dropped, so there's no need to page back further.
 
 #### subject: Item or Identity
 
-What the activity is about. Build it with `Item.create` or `Identity.create`: unlike other properties, a subject must carry its `kind` (which the factories set), because it can be either. A subject without one is ignored. A follow has no subject: the follower goes in `author`.
+What the activity is about. Build it with `Item.create` or `Identity.create`: unlike other properties, a subject must carry its `kind` (which the factories set), because it can be either. A subject without one is ignored. A follow has no subject: the follower goes in `author`. A subject item is shown with its activity but isn't added to the timeline; a post that belongs there too is returned as an item as well, and the two are kept up to date together.
 
 #### author: Identity
 
@@ -3129,7 +3131,7 @@ An optional `semantic` names the *gesture* an `items` or `activities` action per
 { "id": "repost", "label": "Repost", "icon": "tapestry.boost", "group": "repost", "semantic": "boost" }
 ```
 
-Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `mention` action takes reply's shortcut and position only on an item with no `reply` action; a `destructive` action never gets a shortcut; a semantic that isn't an action gesture (`follow`, for now) or an unrecognized value is ignored. Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0; `mention` in 2.1.)
+Rules: a toggle pair shares one semantic (`boost` and `unboost` both declare `"boost"` — the shortcut operates on whichever is present); if two actions on one item declare the same semantic, the first in manifest order gets it; a `mention` action takes reply's shortcut and position only on an item with no `reply` action; a `destructive` action never gets a shortcut; a semantic that isn't an action gesture (`follow` and `message`, for now) or an unrecognized value is ignored. Actions without a semantic behave exactly as before — they just don't get shortcuts. (Added in Tapestry 2.0; `mention` in 2.1.)
 
 #### Built-in Symbols
 
