@@ -55,6 +55,12 @@
             "icon": "person.fill",
             "semantic": "follow",
             "phrase": "followed you"
+        },
+        {
+            "id": "subscribed-post",
+            "label": "New Post",
+            "icon": "bell.fill",
+            "phrase": "posted"
         }
     ]
 }

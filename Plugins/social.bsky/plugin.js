@@ -181,7 +181,7 @@ function queryTimeline(endDate) {
 // Requested apart, each with its own reference point, so a flood of likes can only cost likes, never a reply. A
 // reason is also its activity type's id.
 const conversationReasons = ["mention", "reply", "quote"];
-const reactionReasons = ["like", "repost", "follow", "like-via-repost", "repost-via-repost"];
+const reactionReasons = ["like", "repost", "follow", "like-via-repost", "repost-via-repost", "subscribed-post"];
 
 // How many to take in one load, and how far back a new feed reaches.
 const notificationCap = 800;
@@ -221,13 +221,14 @@ async function fetchNotifications(reasons, key) {
     return { notifications, newestDate };
 }
 
-// The post an event is about: the notification's own record for a post written to you, the record's subject otherwise.
-// Follows are about no post.
+// The post an event is about: the notification's own record for a post written to you or a new post you subscribed to
+// (the bell on a profile), the record's subject otherwise. Follows are about no post.
 function subjectUri(notification) {
     if (notification.reason == "follow") {
         return null;
     }
-    return conversationReasons.includes(notification.reason) ? notification.uri : notification.record?.subject?.uri;
+    const isOwnPost = conversationReasons.includes(notification.reason) || notification.reason == "subscribed-post";
+    return isOwnPost ? notification.uri : notification.record?.subject?.uri;
 }
 
 async function queryNotifications(reasons, key) {

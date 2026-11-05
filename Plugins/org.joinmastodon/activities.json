@@ -54,6 +54,12 @@
             "label": "Follow Request",
             "icon": "person.badge.clock.fill",
             "phrase": "requested to follow you"
+        },
+        {
+            "id": "subscribed-post",
+            "label": "New Post",
+            "icon": "bell.fill",
+            "phrase": "posted"
         }
     ]
 }
