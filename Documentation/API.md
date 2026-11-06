@@ -3191,7 +3191,7 @@ The type's identifier, which activities refer to. Non-empty, with no commas.
 
 **`label`** (required)
 
-A singular noun naming the type ("Reply", "Poll Ended"). Shown when the type has no `phrase` ("Bob · Poll Ended"), and wherever types are listed.
+A singular noun naming the type ("Reply", "Poll Ended"). Shown when the type has no `phrase` ("Bob · Poll Ended"), as the title of the list of who's in a grouped row, and wherever types are listed.
 
 **`icon`**
 
@@ -3204,6 +3204,8 @@ What someone did to the user, in the shared [semantics](#semantics) vocabulary. 
 **`phrase`**
 
 A short past-tense predicate in the service's own words. Tapestry puts the name(s) first and, when the post it's about is shown below, a colon after: "Bob followed you", "Bob and 40 others liked:". Leave out the post itself ("liked", not "liked your post"). Without a phrase, the name(s) and the label are shown.
+
+When the name(s) read better elsewhere, put `__NAME__` where they go: `"A poll by __NAME__ ended"` shows "A poll by Bob ended:", or "A poll by Bob and 2 others ended:". Only the first `__NAME__` is replaced.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.1.
 

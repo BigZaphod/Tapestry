@@ -60,6 +60,12 @@
             "label": "New Post",
             "icon": "bell.fill",
             "phrase": "posted"
+        },
+        {
+            "id": "poll-ended",
+            "label": "Poll Ended",
+            "icon": "chart.bar.fill",
+            "phrase": "A poll by __NAME__ ended"
         }
     ]
 }

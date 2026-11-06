@@ -220,13 +220,15 @@ const activityTypes = {
     follow: "follow",
     follow_request: "follow-request",
     // A post by someone whose bell you turned on, which is a follow (`notify` on Mastodon's follow call).
-    status: "subscribed-post"
+    status: "subscribed-post",
+    // A poll you wrote or voted in has ended. Its account is the poll's author: "A poll by Bob ended:".
+    poll: "poll-ended"
 };
 
 // Requested apart, each with its own reference point, so a flood of likes or new posts can only delay those, never a
 // reply or a follow request. Mastodon ignores a type it doesn't know (`quote` is 4.5+).
 const conversationTypes = ["mention", "quote", "follow_request"];
-const reactionTypes = ["favourite", "reblog", "follow", "status"];
+const reactionTypes = ["favourite", "reblog", "follow", "status", "poll"];
 
 // How many to take in one load. A catch-up past this finishes on later loads, with no hole.
 const notificationCap = 800;
