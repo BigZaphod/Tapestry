@@ -2,7 +2,7 @@
     "id": "social.bsky.feed",
     "display_name": "Bluesky - Follow Feed",
     "service_name": "Bluesky",
-    "default_color": "blue",
+    "default_color": "navy",
     "icon": "https://bsky.app/static/apple-touch-icon.png",
     "item_style": "post",
     "site": "https://public.api.bsky.app",
@@ -10,5 +10,5 @@
     "verify_variables": true,
     "provides_attachments": true,
     "minimum_app_version": "2.0",
-    "version": 59
+    "version": 60
 }

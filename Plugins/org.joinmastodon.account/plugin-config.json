@@ -2,7 +2,7 @@
     "id": "org.joinmastodon.account",
     "display_name": "Mastodon - Follow Account",
     "service_name": "Mastodon",
-    "default_color": "slate",
+    "default_color": "lilac",
     "icon": "https://mastodon.social/packs/media/icons/apple-touch-icon-180x180-a75559a0af48064c1b7c71b81f3bf7c6.png",
     "item_style": "post",
     "site_prompt": "Instance",
@@ -16,5 +16,5 @@
         "quote-inline"
     ],
     "minimum_app_version": "2.0",
-    "version": 65
+    "version": 66
 }
