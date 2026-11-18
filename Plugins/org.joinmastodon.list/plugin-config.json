@@ -22,6 +22,6 @@
     "hidden_tag_classes": [
         "quote-inline"
     ],
-    "minimum_app_version": "2.0",
-    "version": 64
+    "minimum_app_version": "2.1",
+    "version": 65
 }
