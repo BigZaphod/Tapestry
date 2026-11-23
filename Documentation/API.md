@@ -36,6 +36,14 @@ The list below summarizes what changed at each version so you can upgrade an old
 
 **Connectors can be retired.** A `retired` object in `plugin-config.json` marks a connector whose service no longer works with Tapestry: its feeds say why, and nothing offers it for new feeds. Read by Tapestry 2.1 and later whatever the connector's `minimum_app_version`. See [Retiring a connector](#retiring-a-connector).
 
+**Binary data.** [`fetch()`](#fetch) sends bytes: its `body:` can be a `Uint8Array` (or any typed array), a `DataView` or an `ArrayBuffer`. And it reads them: [`.bytes()`](#reading-the-response) resolves to the body as a `Uint8Array`.
+
+**Random bytes and cryptography.** [`crypto.getRandomValues()`](#cryptogetrandomvalues) fills a typed array with secure random bytes. [`require("node:crypto")`](#nodecrypto) provides the part of Node's `crypto` module a binary protocol needs: SHA-1, SHA-256 and SHA-512 hashes, and AES in ECB or CBC mode.
+
+**Password settings.** A [`ui-config.json`](#ui-configjson) input can have the type `"password"`. Its value is kept in the keychain, not with the feed's other settings, and is entered in a secure text field.
+
+**Each input says whether it needs verifying.** A [`ui-config.json`](#ui-configjson) input marked `verify` makes the feed verify again when it changes, and other inputs don't. This replaces `verify_variables`, which made every input do so and is now deprecated; marking any input overrides it. Read by Tapestry 2.1 and later, whatever the connector's `minimum_app_version`.
+
 ### 2.0
 
 2.0 is the largest change since 1.0, with the big headlines being a **return-based interface** and a new **composing** capability — plus supporting additions to items and actions and the JavaScript environment.
@@ -1354,7 +1362,7 @@ There is also one specialized variant: **[`fetch.conditional`](#fetchconditional
   * params: `Dictionary` of query parameters — each key and value is percent-encoded for you and appended to the URL's query.
   * method: `String` HTTP method, for anything the verb presets don't cover. The default is "GET".
   * **at most one** body option:
-      * body: `String` sent as-is (literal — Tapestry never rewrites your body content), or a [`FileAsset`](#fileasset) whose bytes are streamed as the raw request body (its `mimeType` becomes the Content-Type unless a header overrides it).
+      * body: `String` sent as-is (literal — Tapestry never rewrites your body content), or a [`FileAsset`](#fileasset) whose bytes are streamed as the raw request body (its `mimeType` becomes the Content-Type unless a header overrides it), or bytes: a `Uint8Array` (or any typed array), a `DataView` or an `ArrayBuffer`, sent exactly as they are, with the Content-Type `application/octet-stream` unless a header overrides it. Bytes require `minimum_app_version` >= 2.1.
       * json: any value — serialized with `JSON.stringify` and sent with `content-type: application/json`.
       * form: `Dictionary` — URL-encoded and sent with `content-type: application/x-www-form-urlencoded`.
       * multipart: `Array` of parts, each `{ name, value }` (a text field) or `{ name, file, filename, contentType }` (a [`FileAsset`](#fileasset) part) — sent as `multipart/form-data`. (A part's own `contentType` overrides the file's `mimeType`; the two names are deliberately different — a part header vs. the asset's media type.)
@@ -1399,6 +1407,7 @@ await fetch.post(`${site}/posts/favorites`, { form: { id } });
 const post = await fetch(url).json();       // the parsed JSON body
 const text = await fetch(url).text();       // the decoded body text (UTF-8, with charset/8-bit fallbacks)
 const file = await fetch(url).file();       // the body kept as a FileAsset (bytes stay in the app)
+const bytes = await fetch(url).bytes();     // the body's bytes, as a Uint8Array (2.1)
 const response = await fetch(url).response();   // the whole exchange — status, headers, body accessors
 await fetch.post(url);                      // no reader — "just make sure it worked"
 ```
@@ -1418,6 +1427,7 @@ However many readers you touch, only ONE request is sent — and the body can be
   * headers.get(name): `String` header value, case-insensitive, or `null`.
   * text() / json(): `Promise` for the decoded body / parsed JSON (async — the body isn't read until you ask). Text is decoded as UTF-8, falling back to the response's declared charset and then common 8-bit encodings, so a Latin-1 or Shift-JIS feed decodes correctly rather than as mojibake.
   * file(): the body as a [`FileAsset`](#fileasset).
+  * bytes(): `Promise` for the body's bytes as a `Uint8Array`, exactly as they arrived. For a binary protocol; to pass a file along to another request, `file()` keeps the bytes out of JavaScript. A body over 64 MB rejects with a `RangeError`; use `file()` for one that large. Requires `minimum_app_version` >= 2.1.
 
 #### Errors
 
@@ -1484,7 +1494,7 @@ Your own body and header content is otherwise sent **literally** — Tapestry do
 
 An [HTTP conditional request](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Conditional_requests) — replacing [`sendConditionalRequest()`](#sendconditionalrequest) for connectors targeting 2.0 and later, and GET-only by definition. Tapestry records the modified date and/or etag the server returns for each `url` and automatically sends it with your next conditional request for that same `url`.
 
-The name changes what the readers return: on an `HTTP 304 Not Modified`, `.text()`, `.json()`, and `.file()` resolve to **`null`** (an empty body is `""`, so the two are distinguishable), and `.response()` resolves with `status` 304.
+The name changes what the readers return: on an `HTTP 304 Not Modified`, `.text()`, `.json()`, `.file()`, and `.bytes()` resolve to **`null`** (an empty body is `""`, so the two are distinguishable), and `.response()` resolves with `status` 304.
 
 ```javascript
 async function load() {
@@ -2040,6 +2050,52 @@ Returns a new, randomly generated UUID `String` (for example, `"9b2e5c1a-4f7d-4a
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
 ---
+### crypto.getRandomValues
+
+`crypto.getRandomValues(typedArray) → typedArray`
+
+Fills an integer typed array (`Uint8Array`, `Int32Array`, `BigUint64Array` and the like) with cryptographically secure random bytes, in place, and returns the same array. Use it for keys, nonces and padding. This matches the standard browser and Node.js `crypto.getRandomValues()`, including its limits:
+
+  * A `Float32Array`, `Float64Array`, `DataView` or anything that isn't a typed array throws an error named `TypeMismatchError`.
+  * An array of more than 65,536 bytes throws an error named `QuotaExceededError`. Fill a larger one in pieces with `subarray()`.
+
+```javascript
+const nonce = crypto.getRandomValues(new Uint8Array(16));
+```
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.1.
+
+---
+### node:crypto
+
+`require("node:crypto") → Object`
+
+Hashes and ciphers, for services that speak a binary protocol. They're a small part of Node.js's `crypto` module, with the same names, arguments, behavior and errors (each error's `code` is Node's), so connector code that uses them also runs under Node and can be tested there. See [Node's documentation](https://nodejs.org/api/crypto.html) for the details of each function.
+
+```javascript
+const { createHash, createCipheriv } = require("node:crypto");
+
+const digest = createHash("sha256").update(bytes).digest();   // a Uint8Array of 32 bytes
+const hex = createHash("sha1").update("text").digest("hex");   // a hex String
+
+const cipher = createCipheriv("aes-256-ecb", key, null).setAutoPadding(false);
+const block = cipher.update(sixteenBytes);                      // 16 bytes in, 16 bytes out
+```
+
+Only these are provided; everything else in Node's module is absent:
+
+  * **`createHash(algorithm)`**, with the algorithm `"sha1"`, `"sha256"` or `"sha512"`. The hash's `update(data)` adds data and returns the hash, so calls chain. `digest()` returns the hash's bytes, and `digest("hex")` returns them as a hex string; other encodings throw. A hash can be digested once.
+  * **`createCipheriv(algorithm, key, iv)`** and **`createDecipheriv(algorithm, key, iv)`**, with the algorithm `"aes-128-ecb"`, `"aes-192-ecb"`, `"aes-256-ecb"`, `"aes-128-cbc"`, `"aes-192-cbc"` or `"aes-256-cbc"`. The key is 16, 24 or 32 bytes to match. The iv is 16 bytes for CBC and `null` for ECB. The cipher's `update(data)` returns the output so far, and `final()` returns the rest. `setAutoPadding(false)` turns off PKCS#7 padding (it's on by default); unlike Node, call it before the first `update()`. A decipher whose padding is wrong throws an error with the `code` `"ERR_OSSL_BAD_DECRYPT"` from `final()`.
+
+Data and keys can be a `String` (as UTF-8), a typed array, a `DataView` or an `ArrayBuffer`. Results are `Uint8Array`s where Node returns a `Buffer` (which is a `Uint8Array` too). One difference from Node: once a buffer has been passed to one of these functions (or to `fetch`, `TextDecoder` or `crypto.getRandomValues`), it can't be transferred or resized.
+
+A cipher returns output as soon as whole 16-byte blocks are in, so an AES mode that Node doesn't have can be built from ECB a block at a time. For example, Telegram's MTProto uses IGE.
+
+A `node:` name other than `"node:crypto"` throws an error with the `code` `"ERR_UNKNOWN_BUILTIN_MODULE"`.
+
+> **Compatibility:** Requires `minimum_app_version` >= 2.1. Before that, `require("node:crypto")` looks for a resource of that name and returns `false`.
+
+---
 ### TextEncoder and TextDecoder
 
 `new TextEncoder().encode(string) → Uint8Array`
@@ -2052,7 +2108,7 @@ const bytes = new TextEncoder().encode("hi 👋");           // a Uint8Array (8 
 const emoji = new TextDecoder().decode(bytes.slice(3, 7)); // "👋"
 ```
 
-This is a minimal polyfill — `encode`/`decode` only, UTF-8 only.
+This is a minimal polyfill — `encode`/`decode` only, UTF-8 only. `decode` takes any typed array, a `DataView` or an `ArrayBuffer`.
 
 > **Compatibility:** Requires `minimum_app_version` >= 2.0.
 
@@ -2085,6 +2141,8 @@ The resource’s file name extension determines what type of data is returned:
   * **".json"** parses the contents of the file and returns the resulting `Object`. If no object can be parsed, `false` is returned.
   * Any other extension, including **".txt"** returns the contents of the file as a UTF-8 `String`.
   * If the file contains any other kind of data, such as an image, `false` is returned.
+
+A name starting with `node:` loads one of Tapestry's built-in modules instead of a resource. The only one is [`node:crypto`](#nodecrypto); any other `node:` name throws. (Requires `minimum_app_version` >= 2.1.)
 
 Files in resources folder can be symbolic links (not aliases) to other files in the folder that contains the connectors. This way the connectors "com.example.one" and "com.example.two" can share common code in a single file. When you save a connector, the symbolic links are resolved and stored individually in the resulting .tapestry file.
 
@@ -2186,13 +2244,13 @@ Recommended properties:
   
 Optional properties:
 
-  * needs\_verification: `Boolean` with true if verification is needed (by calling `verify()`)
-  * verify\_variables: `Boolean` with true if variable changes cause verification. Use this option if changing a variable will affect  loading content (because its a part of a URL, for example).
+  * needs\_verification: `Boolean` with true if verification is needed (by calling `verify()`). Tapestry verifies a new feed before saving it, and again after its site, its API keys, or a [`verify`](#ui-configjson) input changes. Marking any input with `verify` implies this (in Tapestry 2.1 and later), so it's needed only for a connector that verifies without such inputs, such as one that checks its site. To support earlier versions, set it anyway.
+  * verify\_variables: `Boolean` with true if variable changes cause verification. Use this option if changing a variable will affect  loading content (because its a part of a URL, for example). **Deprecated in 2.1:** mark each input that `verify()` depends on with [`verify`](#ui-configjson) instead. Once any input is marked, `verify_variables` is ignored, so a connector can keep it for older versions of Tapestry. It may be removed in a future version.
   * provides\_attachments: `Boolean` with true if connector generates attachments directly, otherwise post-processing of HTML content will be used to capture images, videos, and link previews.
   * authorization\_header: `String` with a template for the authorization header. If no value is specified, "Bearer \_\_ACCESS\_TOKEN\_\_" will be used. See below for options.
   * refresh\_status\_code: `Number` with the HTTP status code that indicates authorization needs to be refreshed. Default value is 401. A value of 0 will not attempt to refresh tokens.
   * check\_interval: `Number` with number of seconds between load requests (currently unimplemented).
-  * synchronizable\_credentials: `Boolean` allows feed authentication tokens to by synced using iCloud keychain when `true` (default is `true`).
+  * synchronizable\_credentials: `Boolean` allows feed authentication tokens, and the values of `"password"` inputs (see [ui-config.json](#ui-configjson)), to be synced using iCloud keychain when `true` (default is `true`). With `false`, the user logs in and enters passwords on each device.
   * hidden\_tag\_classes: `Array` of `String`s of HTML CSS class names. HTML tags in an item's body with a matching class will be hidden when rendering the item preview for the timeline.
   * retired: `Object` present when the connector's service no longer works with Tapestry. See [Retiring a connector](#retiring-a-connector) below.
 
@@ -2251,7 +2309,7 @@ When a service stops working with Tapestry, ship a new `version` of its connecto
 
   * reason: `String` (required) shown to the user with each of the connector's feeds.
 
-Tapestry 2.1 and later never run a retired connector's script. Its feeds show a problem with the `reason` until the user deletes or disables them, and their actions, replies and posts fail with the `reason`. Nothing offers the connector for new feeds: it's left out of Add Feed, discovery and first-run recommendations. Existing posts, including marked ones, stay until the user deletes the feed. Settings lists the connector under Retired Connectors only while feeds use it, and deleting its last feed deletes the connector. A retired connector is never installed on a device that doesn't already have it.
+Tapestry 2.1 and later never run a retired connector's script. Its feeds show a problem with the `reason` until the user deletes or disables them, and their actions, replies and posts fail with the `reason`. Nothing offers the connector for new feeds: it's left out of Add Feed, discovery and first-run recommendations. Existing posts, including marked ones, stay until the user deletes the feed. Settings lists the connector under No Longer Available only while feeds use it. Deleting its feeds leaves the connector installed, out of sight; only Delete Connector removes it. A retired connector is never installed on a device that doesn't already have it.
 
 Earlier versions ignore `retired` and run the script, so a retired connector should keep a minimal `plugin.js` whose `load()` and `verify()` fail with the same reason, written for the connector's `minimum_app_version`. It can drop everything that offers or adds feeds (`discovery.json`, `suggestions.json`) and that acts on posts (`actions.json`). Keep `ui-config.json`, so an existing feed's settings still show what it followed, and `apps.json`, so its posts' links still open in the service's app.
 
@@ -2297,15 +2355,18 @@ The user interface in the Tapestry app is configured with this file. A connector
 
 And these optional properties:
 
-  * type: `String` with the type of input: "text", "switch", "choices".
+  * type: `String` with the type of input: "text", "switch", "choices", "password".
   * prompt: `String` with the name displayed in the user interface.
   * placeholder: `String` with a placeholder value for the user interface.
   * value: `String` with a default value.
   * choices: `String` with a comma separated list of values that will be displayed in a menu.
+  * verify: `Boolean`, true when `verify()`'s result depends on this input (an account name, or part of a URL). Marking an input implies `needs_verification` in [plugin-config.json](#plugin-configjson). Changing a marked input makes Tapestry verify the feed again when the user saves it, and that verification updates the feed's name and icon. A change to an unmarked input saves without verifying, so the user's own name and icon for the feed stay. Marking any input overrides the deprecated `verify_variables` in [plugin-config.json](#plugin-configjson): only the marked inputs then cause verification. Read by Tapestry 2.1 and later, whatever the connector's `minimum_app_version`; earlier versions ignore it and go by `verify_variables`.
 
 If no `prompt` is specified, the capitalized name of the variable is used. If no `type` is specified, "text" will be assumed.
 
 A variable with the type `switch` will present a switch in the configuration interface and sets a value of "on" or "off" (the default value). A `choices` type uses a popup menu with the strings in a comma separated list, with the default being the first item in the list.
+
+A `password` type is for a secret the user enters, such as an API key or a session string: a secure text field whose value Tapestry keeps in the keychain, not with the feed's other settings. It reaches `plugin.js` as a variable like any other. It has no default value (a `value` is ignored, since it would be in the connector's bundle for anyone to read). Whether it syncs to the user's other devices follows `synchronizable_credentials` in [plugin-config.json](#plugin-configjson); on a device without it, the variable is `""`, so `load()` should throw a clear error asking the user to enter it. Tapestry 2.1 added this type, and earlier versions show it as an invalid input, so a connector that uses it should set `minimum_app_version` to 2.1 or later.
 
 Multiple inputs with the same name will result in undefined behavior. It won’t act predictably in the configuration interface or `plugin.js`.
 
