@@ -2,12 +2,14 @@
     "inputs": [
         {
             "name": "account",
+            "verify": true,
             "type": "text",
             "prompt": "Account",
             "placeholder": "iconfactory.com"
         },
         {
             "name": "listId",
+            "verify": true,
             "type": "text",
             "prompt": "List Identifier",
             "placeholder": "3lng6ryhigk2a"

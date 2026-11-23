@@ -2,6 +2,7 @@
     "inputs": [
         {
             "name": "tag",
+            "verify": true,
             "type": "text",
             "prompt": "Tag",
             "placeholder": "TapestryApp"

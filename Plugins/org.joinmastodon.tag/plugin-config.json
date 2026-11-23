@@ -10,11 +10,10 @@
     "site_default": "https://mastodon.social",
     "site_help": "Enter the Instance where the Mastodon tag is located, then the name of the Tag below.",
     "needs_verification": true,
-    "verify_variables": true,
     "provides_attachments": true,
     "hidden_tag_classes": [
         "quote-inline"
     ],
     "minimum_app_version": "2.1",
-    "version": 64
+    "version": 65
 }

@@ -7,8 +7,7 @@
     "item_style": "post",
     "site": "https://public.api.bsky.app",
     "needs_verification": true,
-    "verify_variables": true,
     "provides_attachments": true,
     "minimum_app_version": "2.1",
-    "version": 61
+    "version": 62
 }

@@ -20,6 +20,7 @@
         },
         {
             "name": "communityHandle",
+            "verify": true,
             "type": "text",
             "prompt": "Community Name",
             "placeholder": "art-history-academy"
